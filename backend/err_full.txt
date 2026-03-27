@@ -1,0 +1,41 @@
+﻿python.exe : INFO:     
+Started server process 
+[27652]
+At line:1 char:1
++ & "C:\Users\nuraz\App
+Data\Local\Microsoft\Wi
+ndowsApps\python.exe" -
+c  ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~
+~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (INFO:     Sta   
+ rted server proces    
+s [27652]:String)     [
+], RemoteExceptio    n
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+INFO:     Waiting for a
+pplication startup.
+INFO:     Application s
+tartup complete.
+ERROR:    [Errno 10048]
+ error while attempting
+ to bind on address ('1
+27.0.0.1', 8599): [wine
+rror 10048] only one us
+age of each socket addr
+ess (protocol/network a
+ddress/port) is normall
+y permitted
+INFO:     Waiting for a
+pplication shutdown.
+INFO:     Application s
+hutdown complete.
+[DB] Database initialized at C:\Users\nuraz\Documents\CODING\Memora\backend\data\memora.db
+[Memora API] Server started on port 8599

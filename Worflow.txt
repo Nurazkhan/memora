@@ -1,0 +1,29 @@
+📘 Complete Workflow — How the App Should Work
+
+The application starts with a very simple idea: instead of manually sorting hundreds or thousands of student photos, the system helps the user organize everything automatically, while still allowing full control and corrections.
+
+When a studio begins working on a new album, they first create a new project inside the application. This project represents one full graduation batch — not just a single class, but all students photographed together during the same period. This is important because the system works best when it can “see” all people at once and understand relationships between them.
+
+After creating the project, the user uploads all available photos. These can include individual portraits (both academic and free-style) and all group photos, even if they are completely unsorted. At the same time, the user uploads a list of students, usually from an Excel file. This list becomes the “ground truth” of who should appear in the albums.
+
+Once the images are uploaded, the system begins its core processing phase. It scans every photo and detects all faces. For each detected face, it creates a mathematical representation — a kind of digital identity — and then compares these across all images. Based on similarity, the system groups faces into clusters, where each cluster ideally represents one person. This process is called face clustering, and it allows the system to organize thousands of images without manual sorting .
+
+At this stage, the system does not yet know names. It only knows that “these 50 faces likely belong to the same person.” So the next step is an interactive tagging phase. The user is shown one cluster at a time, with several example faces. Instead of labeling each photo individually, the user simply assigns a name to the entire group. This dramatically reduces work — instead of labeling hundreds of images, they label around 160 clusters (one per student). Systems like this are known to greatly improve annotation efficiency by letting users label groups instead of individual photos .
+
+After this step, the system now understands who each person is across all images. It then builds a deeper structure: for every photo, it stores which students appear in it. For example, one photo might contain three specific students, while another contains only one. This information becomes the foundation for everything that follows.
+
+Using this structure, the system begins organizing photos for album creation. For individual pages, it looks at all photos belonging to a single student and automatically selects the best ones. It evaluates image quality based on factors like clarity, face visibility, and expression — similar to how modern photobook systems score faces for quality and suitability . From this, it chooses the top images for academic and free-style sections.
+
+For group photos, the system uses a different logic. Instead of relying on location or time, it analyzes which students appear together most frequently. If certain students appear together many times, the system assumes they are a friend group. It then selects photos where most of these students appear together and uses those as candidate group images. This approach avoids the confusion of location-based grouping and focuses directly on relationships between people.
+
+If there are unknown faces — for example, guests or students from other classes — the system keeps them but does not assign them to any specific student. These faces can still appear in group photos but are ignored when building individual pages.
+
+Once the system has selected candidate images, it moves to the album construction phase. At this point, the user either creates a template inside the app or loads a PDF as a background and manually defines frames on top of it. Each frame is marked with a type, such as “individual,” “group,” or “class.” This structure is critical, because it tells the system what kind of image should be placed in each position.
+
+The system then automatically fills the album. Individual frames receive the best portraits of each student, while group frames receive appropriate group images based on co-occurrence. The result is a fully generated album draft.
+
+However, this draft is not final. The next stage is manual review and editing. The user can click on any image inside the album and immediately see alternative options — usually other photos of the same student or similar group compositions. If the system made a mistake, the user can quickly replace the image or even reassign the identity. This step is essential, because face recognition systems are not perfect and always require human correction .
+
+After all corrections are made, the album is ready for preview. The application provides a visual representation of the album, allowing users to flip through pages and check the layout. This preview is used internally first, and later can be shared with clients for approval.
+
+Finally, once everything is confirmed, the album is exported. The output is typically a print-ready PDF, which can be sent directly to production. At this stage, the system has transformed a completely unorganized set of photos into a structured, personalized album for each student.
