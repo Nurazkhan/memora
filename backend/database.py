@@ -65,6 +65,11 @@ def init_db():
             quality_score REAL DEFAULT 0.0,
             sharpness REAL DEFAULT 0.0,
             face_size REAL DEFAULT 0.0,
+            detector_confidence REAL DEFAULT 0.0,
+            cluster_confidence REAL DEFAULT 0.0,
+            pose_pitch REAL DEFAULT 0.0,
+            pose_yaw REAL DEFAULT 0.0,
+            pose_roll REAL DEFAULT 0.0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -78,6 +83,7 @@ def init_db():
             student_id INTEGER DEFAULT NULL,
             face_count INTEGER DEFAULT 0,
             representative_face_id INTEGER DEFAULT NULL,
+            confidence REAL DEFAULT 0.0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
         );

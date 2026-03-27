@@ -10,14 +10,15 @@ const isDev = !app.isPackaged;
 const BACKEND_PORT = 8599;
 
 function findPython() {
+  const venvPath = path.join(__dirname, '..', 'backend', 'env', 'Scripts', 'python.exe');
   const candidates = process.platform === 'win32'
-    ? ['python', 'python3', 'py -3']
-    : ['python3', 'python'];
+    ? [venvPath, 'python', 'python3']
+    : [path.join(__dirname, '..', 'backend', 'env', 'bin', 'python'), 'python3', 'python'];
 
   for (const cmd of candidates) {
     try {
-      execSync(`${cmd} -c "import uvicorn"`, { stdio: 'pipe', timeout: 5000 });
-      return cmd.split(' ')[0];
+      execSync(`"${cmd}" -c "import uvicorn"`, { stdio: 'pipe', timeout: 5000 });
+      return cmd;
     } catch (e) {
       // try next
     }

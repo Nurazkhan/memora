@@ -3,17 +3,30 @@ import sqlite3
 import numpy as np
 import cv2
 from pathlib import Path
-from sklearn.cluster import DBSCAN
+import hdbscan
 
 from database import get_connection
+
+# Lazy load InsightFace to avoid blocking server startup or memory issues
+_face_app = None
+
+def get_face_app():
+    global _face_app
+    if _face_app is None:
+        from insightface.app import FaceAnalysis
+        # buffalo_l includes detection, alignment, gender/age, and recognition (ArcFace 512D)
+        _face_app = FaceAnalysis(name='buffalo_l', allowed_modules=['detection', 'alignment', 'recognition'])
+        # ctx_id=-1 forces CPU to avoid CUDA errors out of the box on Windows. 
+        _face_app.prepare(ctx_id=-1, det_size=(640, 640))
+    return _face_app
 
 def process_project_faces(project_id: int, project_dir: str):
     """
     Background worker that:
-    1. Detects faces in all unprocessed images for the project.
-    2. Extracts embeddings.
-    3. Saves face crops and embeddings.
-    4. Runs clustering algorithms over all embeddings.
+    1. Detects faces in all unprocessed images using InsightFace.
+    2. Applies strict quality gating (size, blur, pose, confidence).
+    3. Extracts ArcFace embeddings and saves crops.
+    4. Runs HDBSCAN clustering over all valid embeddings.
     """
     conn = get_connection()
     try:
@@ -34,13 +47,8 @@ def process_project_faces(project_id: int, project_dir: str):
 
         cursor = conn.cursor()
         
-        # Initialize OpenCV Haarcascade for face detection
-        face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        face_cascade = cv2.CascadeClassifier(face_cascade_path)
-        
-        # Initialize HOG descriptor for embedding extraction (flattened to 1D)
-        # Using a fixed 64x64 window for faces
-        hog = cv2.HOGDescriptor((64, 64), (16, 16), (8, 8), (8, 8), 9)
+        # Load the deep learning model
+        app = get_face_app()
         
         for img_row in images:
             img_id = img_row["id"]
@@ -49,31 +57,65 @@ def process_project_faces(project_id: int, project_dir: str):
             try:
                 img_cv = cv2.imread(img_path)
                 if img_cv is None: continue
-                gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
                 
-                # Detect faces
-                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+                # InsightFace detection + alignment + embedding in one pass
+                faces = app.get(img_cv)
                 
-                for (x, y, w, h) in faces:
-                    # Extract face crop
-                    face_crop = img_cv[y:y+h, x:x+w]
+                for face in faces:
+                    # 1. Detector Confidence Gate
+                    det_score = float(face.det_score)
+                    if det_score < 0.60:
+                        continue
+                        
+                    # Bounding Box
+                    bbox = face.bbox.astype(int)
+                    x1, y1, x2, y2 = bbox
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(img_cv.shape[1], x2), min(img_cv.shape[0], y2)
+                    w, h = x2 - x1, y2 - y1
                     
-                    # Estimate sharpness
+                    # 2. Minimum Face Size Gate (e.g. 40x40)
+                    if w < 40 or h < 40:
+                        continue
+                        
+                    # Extract face crop
+                    face_crop = img_cv[y1:y2, x1:x2]
+                    if face_crop.size == 0: continue
+                    
+                    # 3. Blur / Sharpness Gate
                     face_gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-                    sharpness = cv2.Laplacian(face_gray, cv2.CV_64F).var()
+                    sharpness = float(cv2.Laplacian(face_gray, cv2.CV_64F).var())
+                    # Adaptive/strict blur threshold
+                    if sharpness < 100.0:
+                        continue
+                        
                     face_size = w * h
                     
-                    # Compute HOG embedding
-                    resized_face = cv2.resize(face_crop, (64, 64))
-                    embedding = hog.compute(resized_face).flatten()
-                    
-                    # Save DB record to get face ID
+                    # 4. Pose Gate (pitch, yaw, roll)
+                    pitch, yaw, roll = 0.0, 0.0, 0.0
+                    if face.pose is not None:
+                        pitch, yaw, roll = face.pose
+                        if abs(yaw) > 45 or abs(pitch) > 45:
+                            continue
+                        
+                    # Ensure embedding exists and is normalized
+                    embedding = face.normed_embedding
+                    if embedding is None:
+                        continue
+                        
+                    # Save DB record
                     cursor.execute(
                         """
-                        INSERT INTO faces (image_id, project_id, bbox_x, bbox_y, bbox_w, bbox_h, sharpness, face_size)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO faces (
+                            image_id, project_id, bbox_x, bbox_y, bbox_w, bbox_h, 
+                            sharpness, face_size, detector_confidence, 
+                            pose_pitch, pose_yaw, pose_roll
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (img_id, project_id, int(x), int(y), int(w), int(h), sharpness, int(face_size))
+                        (img_id, project_id, int(x1), int(y1), int(w), int(h), 
+                         sharpness, int(face_size), det_score, 
+                         float(pitch), float(yaw), float(roll))
                     )
                     face_id = cursor.lastrowid
                     
@@ -115,7 +157,8 @@ def process_project_faces(project_id: int, project_dir: str):
 
 def run_clustering(project_id: int, conn: sqlite3.Connection):
     """
-    Cluster all faces for a project using DBSCAN on their embeddings.
+    Cluster all faces for a project using HDBSCAN on ArcFace embeddings.
+    HDBSCAN naturally rejects noise (label -1) and supports soft membership scores.
     """
     faces = conn.execute(
         "SELECT id, embedding_path FROM faces WHERE project_id = ?",
@@ -136,55 +179,54 @@ def run_clustering(project_id: int, conn: sqlite3.Connection):
         except Exception as e:
             print(f"Failed to load embedding {row['embedding_path']}: {e}")
             
-    if not embeddings:
+    if not embeddings or len(embeddings) < 2:
         return
         
     X = np.array(embeddings)
     
-    # Normalize embeddings to unit length for cosine-like comparison
+    # ArcFace embeddings are already L2 normalized, but we ensure it just in case
     norms = np.linalg.norm(X, axis=1, keepdims=True)
-    norms[norms == 0] = 1  # avoid division by zero
+    norms[norms == 0] = 1
     X = X / norms
     
-    # Determine optimal number of clusters (K)
-    # First, try to count imported students
-    student_count_row = conn.execute("SELECT COUNT(*) as c FROM students WHERE project_id = ?", (project_id,)).fetchone()
-    student_count = student_count_row["c"] if student_count_row else 0
-    
-    total_faces = len(embeddings)
-    
-    if student_count > 0:
-        k = min(student_count, total_faces)
-    else:
-        # Heuristic: roughly 5 photos per person on average
-        k = max(2, total_faces // 5)
-        k = min(k, total_faces)
-        
-    if k == 0: k = 1
+    # Run HDBSCAN
+    # min_cluster_size=5 ensures we only group if we have enough confident matches
+    # min_samples=2 or 3 makes it conservative about joining clusters.
+    # metric='euclidean' works well on L2-normalized vectors (proportional to cosine distance)
+    # allow_single_cluster is useful if all faces are actually the same person
+    try:
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=min(5, len(X)), min_samples=2, metric='euclidean', allow_single_cluster=True)
+        clusterer.fit(X)
+        labels = clusterer.labels_
+        probabilities = clusterer.probabilities_
+    except Exception as e:
+        print(f"HDBSCAN clustering failed: {e}")
+        return
 
-    from sklearn.cluster import KMeans
-    kmeans = KMeans(n_clusters=k, n_init='auto', random_state=42).fit(X)
-    labels = kmeans.labels_
-    
     cursor = conn.cursor()
     
     # First, clear existing clusters
-    cursor.execute("UPDATE faces SET cluster_id = NULL WHERE project_id = ?", (project_id,))
+    cursor.execute("UPDATE faces SET cluster_id = NULL, cluster_confidence = 0.0 WHERE project_id = ?", (project_id,))
     cursor.execute("DELETE FROM clusters WHERE project_id = ?", (project_id,))
     
     # Group by label
-    label_to_face_ids = {}
-    for face_id, label in zip(face_ids, labels):
-        if label not in label_to_face_ids:
-            label_to_face_ids[label] = []
-        label_to_face_ids[label].append(face_id)
-    
-    noise_faces = [] # KMeans doesn't produce noise, but keep var for compatibility
+    label_to_face_info = {}
+    for face_id, label, prob in zip(face_ids, labels, probabilities):
+        if label == -1:
+            # Noise / Uncertain face - leave cluster_id as NULL
+            cursor.execute("UPDATE faces SET cluster_confidence = ? WHERE id = ?", (float(prob), face_id))
+            continue
+            
+        if label not in label_to_face_info:
+            label_to_face_info[label] = []
+        label_to_face_info[label].append((face_id, float(prob)))
     
     cluster_idx = 0
     # Create clusters for grouped faces
-    for label, ids in label_to_face_ids.items():
+    for label, face_infos in label_to_face_info.items():
         # Representative face is the one with highest sharpness and size
+        ids = [fi[0] for fi in face_infos]
+        
         rep_face_id = ids[0]
         max_score = -1
         
@@ -197,25 +239,18 @@ def run_clustering(project_id: int, conn: sqlite3.Connection):
                     max_score = score
                     rep_face_id = fid
                     
+        # Calculate average cluster confidence
+        avg_confidence = sum([fi[1] for fi in face_infos]) / len(face_infos) if face_infos else 0.0
+                    
         cursor.execute(
-            "INSERT INTO clusters (project_id, name, face_count, representative_face_id) VALUES (?, ?, ?, ?)",
-            (project_id, f"Cluster {cluster_idx + 1}", len(ids), rep_face_id)
+            "INSERT INTO clusters (project_id, name, face_count, representative_face_id, confidence) VALUES (?, ?, ?, ?, ?)",
+            (project_id, f"Cluster {cluster_idx + 1}", len(ids), rep_face_id, float(avg_confidence))
         )
         cluster_id = cursor.lastrowid
         cluster_idx += 1
         
         # Update faces
-        for fid in ids:
-            cursor.execute("UPDATE faces SET cluster_id = ? WHERE id = ?", (cluster_id, fid))
-    
-    # Create individual clusters for noise faces
-    for fid in noise_faces:
-        cursor.execute(
-            "INSERT INTO clusters (project_id, name, face_count, representative_face_id) VALUES (?, ?, ?, ?)",
-            (project_id, f"Cluster {cluster_idx + 1}", 1, fid)
-        )
-        cluster_id = cursor.lastrowid
-        cluster_idx += 1
-        cursor.execute("UPDATE faces SET cluster_id = ? WHERE id = ?", (cluster_id, fid))
+        for (fid, prob) in face_infos:
+            cursor.execute("UPDATE faces SET cluster_id = ?, cluster_confidence = ? WHERE id = ?", (cluster_id, float(prob), fid))
             
     conn.commit()
