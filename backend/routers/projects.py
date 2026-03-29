@@ -452,6 +452,22 @@ def get_cluster_faces(project_id: int, cluster_id: int):
         conn.close()
 
 
+@router.get("/{project_id}/images/{image_id}")
+def get_image_details(project_id: int, image_id: int):
+    """Retrieve details for a specific image, including its original and thumbnail paths."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, filename, original_path, thumbnail_path, width, height, created_at FROM images WHERE id = ? AND project_id = ?",
+            (image_id, project_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Image not found")
+        return dict(row)
+    finally:
+        conn.close()
+
+
 @router.put("/{project_id}/clusters/{cluster_id}")
 def update_cluster_name(project_id: int, cluster_id: int, payload: ClusterUpdate):
     """Update a cluster's name (Tagging)."""
@@ -601,6 +617,53 @@ def create_cluster_from_face(project_id: int, face_id: int, payload: CreateClust
         return {"message": "New cluster created.", "cluster_id": cluster_id}
     except HTTPException:
         raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/{project_id}/faces/{face_id}/unassign")
+def unassign_face(project_id: int, face_id: int):
+    """Remove a face from its cluster and return it to the review queue."""
+    conn = get_connection()
+    try:
+        face = conn.execute(
+            "SELECT id, cluster_id FROM faces WHERE id = ? AND project_id = ?", (face_id, project_id)
+        ).fetchone()
+        if not face:
+            raise HTTPException(status_code=404, detail="Face not found")
+        
+        cluster_id = face["cluster_id"]
+        if not cluster_id:
+            return {"message": "Face is already unassigned."}
+            
+        conn.execute(
+            "UPDATE faces SET cluster_id = NULL, cluster_confidence = 0.0 WHERE id = ?",
+            (face_id,)
+        )
+        
+        # Update cluster stats
+        new_count = conn.execute(
+            "SELECT COUNT(*) as c FROM faces WHERE cluster_id = ?", (cluster_id,)
+        ).fetchone()["c"]
+        if new_count == 0:
+            conn.execute("DELETE FROM clusters WHERE id = ?", (cluster_id,))
+        else:
+            conn.execute("UPDATE clusters SET face_count = ? WHERE id = ?", (new_count, cluster_id))
+            # If this face was the representative, find a new one
+            rep = conn.execute("SELECT representative_face_id FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
+            if rep and rep["representative_face_id"] == face_id:
+                best = conn.execute(
+                    "SELECT id FROM faces WHERE cluster_id = ? ORDER BY sharpness * face_size DESC LIMIT 1",
+                    (cluster_id,)
+                ).fetchone()
+                if best:
+                    conn.execute("UPDATE clusters SET representative_face_id = ? WHERE id = ?", (best["id"], cluster_id))
+
+        conn.commit()
+        return {"message": "Face unassigned from identity."}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))

@@ -28,6 +28,7 @@ export const uploadImages = (id, formData, onUploadProgress) => {
   });
 };
 export const getProjectImages = (id) => api.get(`/projects/${id}/images`);
+export const getImage = (projectId, imageId) => api.get(`/projects/${projectId}/images/${imageId}`);
 
 // Students
 export const uploadStudentList = (id, formData) =>
@@ -56,6 +57,7 @@ export const assignFaceToCluster = (projectId, faceId, clusterId) =>
   api.post(`/projects/${projectId}/faces/${faceId}/assign`, { cluster_id: clusterId });
 export const createClusterFromFace = (projectId, faceId, name) =>
   api.post(`/projects/${projectId}/faces/${faceId}/create-cluster`, { name });
+export const unassignFace = (projectId, faceId) => api.post(`/projects/${projectId}/faces/${faceId}/unassign`);
 export const deleteFace = (projectId, faceId) => api.delete(`/projects/${projectId}/faces/${faceId}`);
 
 // Image Deletion

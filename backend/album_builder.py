@@ -92,7 +92,8 @@ def generate_album(project_id: int) -> List[Dict[str, Any]]:
                     "face_id": best_face["id"],
                     "face_thumb": best_face["thumbnail_path"],
                     "image_id": best_face["image_id"],
-                    "image_thumb": best_face["img_thumb"]
+                    "image_thumb": best_face["img_thumb"],
+                    "image_original": best_face["original_path"]
                 })
         
         # Create Individual Pages (grid of 4)
@@ -128,6 +129,7 @@ def generate_album(project_id: int) -> List[Dict[str, Any]]:
                 "items": [{
                     "image_id": g["id"],
                     "image_thumb": g["thumbnail_path"],
+                    "image_original": g["original_path"],
                     "metadata": g["students_in_photo"]
                 }]
             })

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getProjects, createProject, checkHealth } from '../api/client';
 
@@ -10,6 +10,7 @@ export default function Dashboard() {
   const [formData, setFormData] = useState({ name: '', description: '' });
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
+  const inputRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +60,14 @@ export default function Dashboard() {
       setCreating(false);
     }
   }
+
+  useEffect(() => {
+    if (showModal && inputRef.current) {
+      setTimeout(() => {
+        if (inputRef.current) inputRef.current.focus();
+      }, 100);
+    }
+  }, [showModal]);
 
   if (!backendReady) {
     return (
@@ -162,6 +171,7 @@ export default function Dashboard() {
               <div className="form-group">
                 <label className="form-label">Project Name</label>
                 <input
+                  ref={inputRef}
                   className="form-input"
                   type="text"
                   placeholder="e.g. Class of 2026"

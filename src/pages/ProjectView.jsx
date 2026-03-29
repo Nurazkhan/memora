@@ -1,10 +1,178 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getProject, uploadImages, getProjectImages, uploadStudentList, getStudents, createStudent, updateStudent, deleteStudent, startProcessing, getClusters, assignClusterName, getProgress, getUnassignedFaces, assignFaceToCluster, createClusterFromFace, deleteImage, deleteCluster, deleteFace, getClusterFaces } from '../api/client';
+import { 
+  getProject, uploadImages, getProjectImages, uploadStudentList, 
+  getStudents, createStudent, updateStudent, deleteStudent, 
+  startProcessing, getClusters, assignClusterName, getProgress, 
+  getUnassignedFaces, assignFaceToCluster, createClusterFromFace, 
+  deleteImage, deleteCluster, deleteFace, getClusterFaces,
+  unassignFace, getImage 
+} from '../api/client';
 import Dropzone from '../components/Dropzone';
 import axios from 'axios';
 
 const API_BASE = 'http://127.0.0.1:8599';
+
+function FullImageOverlay({ image, onClose }) {
+  if (!image) return null;
+  return (
+    <div 
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.9)', zIndex: 2000,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 40, cursor: 'zoom-out'
+      }}
+      onClick={onClose}
+    >
+      <div style={{ position: 'relative', maxWidth: '100%', maxHeight: '100%' }} onClick={e => e.stopPropagation()}>
+        <img 
+          src={image.url} 
+          alt={image.filename}
+          style={{ maxWidth: '100vw', maxHeight: '90vh', objectFit: 'contain', boxShadow: '0 0 50px rgba(0,0,0,0.5)' }}
+        />
+        <div style={{ position: 'absolute', top: -40, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', color: 'white' }}>
+          <span style={{ fontSize: 14, fontWeight: 500 }}>{image.filename}</span>
+          <button 
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', color: 'white', fontSize: 24, cursor: 'pointer' }}
+          >×</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UnassignedFaceCard({ face, project, clusters, projectId, onRefresh, onDelete, onViewImage }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [creatingIdentity, setCreatingIdentity] = useState(false);
+  const [identityName, setIdentityName] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (creatingIdentity && inputRef.current) {
+      setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 100);
+    }
+  }, [creatingIdentity]);
+
+  const handleCreate = async () => {
+    const finalName = identityName.trim() || 'Unknown';
+    if (!identityName.trim() && !window.confirm("Create identity without a name?")) return;
+    
+    setLoading(true); setError(null);
+    try {
+      await createClusterFromFace(projectId, face.id, finalName);
+      onRefresh(); // Refresh the parent (this card will unmount since it's no longer unassigned)
+    } catch (err) {
+      setError('API Error: Failed to create identity');
+      setLoading(false);
+    }
+  };
+
+  const handleAssign = async (clusterId) => {
+    if (!clusterId) return;
+    setLoading(true); setError(null);
+    try {
+      await assignFaceToCluster(projectId, face.id, clusterId);
+      onRefresh(); // Refresh the parent
+    } catch (err) {
+      setError('API Error: Failed to assign face');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 12 }}>
+      <div 
+        style={{ 
+          width: '100%', aspectRatio: '1', borderRadius: 'var(--radius-sm)', 
+          background: 'var(--bg-tertiary)', overflow: 'hidden', marginBottom: 10,
+          cursor: 'zoom-in' 
+        }}
+        onClick={() => onViewImage(face)}
+      >
+        <img 
+          src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/faces/face_${face.id}.jpg`}
+          alt={`Face #${face.id}`}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          onError={(e) => { e.target.style.display = 'none'; }}
+        />
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>Face #{face.id} &middot; {Math.round(face.detector_confidence * 100)}% conf</span>
+        <button 
+          onClick={onDelete}
+          style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: 14 }}
+          title="Drop face"
+        >🗑️</button>
+      </div>
+
+      {loading ? (
+        <div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+          <span className="spinner" style={{ marginRight: 8, width: 14, height: 14, borderWidth: 2 }}></span> Working...
+        </div>
+      ) : (
+        <>
+          {error && <div style={{ color: 'var(--danger)', fontSize: 11, marginBottom: 8 }}>{error}</div>}
+
+          {/* Suggested Match */}
+          {face.suggested_cluster_id && clusters.find(c => c.id === face.suggested_cluster_id) && (
+            <button
+              className="btn"
+              style={{ width: '100%', marginBottom: 6, fontSize: 11.5, background: 'var(--primary)', color: 'white', border: 'none' }}
+              onClick={() => handleAssign(face.suggested_cluster_id)}
+            >
+              ✨ Match: {clusters.find(c => c.id === face.suggested_cluster_id).name}
+            </button>
+          )}
+
+          {/* Assign to existing cluster */}
+          {clusters.length > 0 && (
+            <select 
+              className="form-input"
+              value={""}
+              onChange={(e) => handleAssign(parseInt(e.target.value))}
+              style={{ padding: '6px 8px', fontSize: 12, marginBottom: 6 }}
+            >
+              <option value="" disabled>Assign to existing...</option>
+              {clusters.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.face_count} faces)
+                </option>
+              ))}
+            </select>
+          )}
+          
+          {/* Create new cluster */}
+          {creatingIdentity ? (
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+              <input 
+                ref={inputRef}
+                className="form-input"
+                style={{ flex: 1, padding: '4px 6px', fontSize: 11 }}
+                placeholder="Name..."
+                value={identityName}
+                onChange={e => setIdentityName(e.target.value)}
+                onKeyDown={e => { if(e.key === 'Enter') handleCreate() }}
+              />
+              <button className="btn btn-primary btn-sm" style={{ padding: '4px 8px', fontSize: 11 }} onClick={handleCreate}>Save</button>
+              <button className="btn btn-secondary btn-sm" style={{ padding: '4px 8px', fontSize: 11 }} onClick={() => {setCreatingIdentity(false); setIdentityName('');}}>✕</button>
+            </div>
+          ) : (
+            <button 
+              className="btn btn-secondary btn-sm"
+              style={{ width: '100%', justifyContent: 'center', fontSize: 11.5 }}
+              onClick={() => { setCreatingIdentity(true); setIdentityName(''); }}
+            >
+              + New Identity
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function ProjectView() {
   const { id } = useParams();
@@ -28,6 +196,13 @@ export default function ProjectView() {
   const [showNewRow, setShowNewRow] = useState(false);
   const [newStudentForm, setNewStudentForm] = useState({ name: '', class_name: '', student_number: '' });
   const [savingStudent, setSavingStudent] = useState(false);
+  const newStudentRef = useRef(null);
+
+  useEffect(() => {
+    if (showNewRow && newStudentRef.current) {
+      setTimeout(() => { if (newStudentRef.current) newStudentRef.current.focus(); }, 100);
+    }
+  }, [showNewRow]);
   
   const [clusters, setClusters] = useState([]);
   const [unassignedFaces, setUnassignedFaces] = useState([]);
@@ -40,6 +215,7 @@ export default function ProjectView() {
   
   const [albumPages, setAlbumPages] = useState([]);
   const [generatingAlbum, setGeneratingAlbum] = useState(false);
+  const [viewingImage, setViewingImage] = useState(null);
 
   useEffect(() => {
     loadProject();
@@ -156,6 +332,37 @@ export default function ProjectView() {
     } catch (err) {
       console.error('Failed to delete face:', err);
       alert('Failed to delete face.');
+    }
+  }
+
+  async function handleViewFaceImage(face) {
+    try {
+      const res = await getImage(id, face.image_id);
+      const imgData = res.data;
+      // Construct URL. e.g. "projects_data/test/originals/abc.jpg" 
+      const relPath = imgData.original_path.replace(/\\/g, '/').split('/projects_data/')[1];
+      setViewingImage({
+        url: `${API_BASE}/files/${relPath}`,
+        filename: imgData.filename
+      });
+    } catch (err) {
+      console.error('Failed to load full image:', err);
+    }
+  }
+
+  async function handleUnassignFace(faceId) {
+    if (!window.confirm('Remove this face from this identity group? It will return to the review queue.')) return;
+    try {
+      await unassignFace(id, faceId);
+      if (selectedCluster) {
+        handleOpenClusterModal(selectedCluster);
+        loadClusters();
+      } else {
+        loadUnassignedFaces();
+      }
+    } catch (err) {
+      console.error('Failed to unassign face:', err);
+      alert('Failed to unassign face.');
     }
   }
 
@@ -727,12 +934,12 @@ export default function ProjectView() {
                     <tr style={{ borderBottom: '1px solid var(--border)', background: 'rgba(52, 211, 153, 0.04)' }}>
                       <td style={{ padding: '8px 12px' }}>
                         <input 
+                          ref={newStudentRef}
                           className="form-input"
                           value={newStudentForm.name}
                           onChange={e => setNewStudentForm(f => ({ ...f, name: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') handleAddStudent(); if (e.key === 'Escape') { setShowNewRow(false); setNewStudentForm({ name: '', class_name: '', student_number: '' }); } }}
                           placeholder="New student name..."
-                          autoFocus
                           style={{ padding: '6px 10px', fontSize: 13 }}
                         />
                       </td>
@@ -883,6 +1090,7 @@ export default function ProjectView() {
                           className="form-input" 
                           placeholder="Enter name..."
                           defaultValue={cluster.name.startsWith("Cluster") ? "" : cluster.name}
+                          onPointerDown={(e) => { e.currentTarget.focus(); }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') handleAssignName(cluster.id, e.target.value);
                           }}
@@ -927,91 +1135,19 @@ export default function ProjectView() {
                   </p>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
                     {unassignedFaces.map(face => (
-                      <div key={face.id} className="card" style={{ padding: 12 }}>
-                        <div style={{ 
-                          width: '100%', aspectRatio: '1', borderRadius: 'var(--radius-sm)', 
-                          background: 'var(--bg-tertiary)', overflow: 'hidden', marginBottom: 10 
-                        }}>
-                          <img 
-                            src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/faces/face_${face.id}.jpg`}
-                            alt={`Face #${face.id}`}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                          />
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>Face #{face.id} &middot; {Math.round(face.detector_confidence * 100)}% conf</span>
-                          <button 
-                            onClick={() => handleDeleteFace(face.id, false)}
-                            style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: 14 }}
-                            title="Drop face"
-                          >🗑️</button>
-                        </div>
-                        
-                        {/* Suggested Match */}
-                        {face.suggested_cluster_id && clusters.find(c => c.id === face.suggested_cluster_id) && (
-                          <button
-                            className="btn"
-                            style={{ width: '100%', marginBottom: 6, fontSize: 11.5, background: 'var(--primary)', color: 'white', border: 'none' }}
-                            onClick={async () => {
-                              try {
-                                await assignFaceToCluster(id, face.id, face.suggested_cluster_id);
-                                loadClusters();
-                                loadUnassignedFaces();
-                              } catch (err) {
-                                alert('Failed to assign suggested face.');
-                              }
-                            }}
-                          >
-                            ✨ Match: {clusters.find(c => c.id === face.suggested_cluster_id).name}
-                          </button>
-                        )}
-
-                        {/* Assign to existing cluster */}
-                        {clusters.length > 0 && (
-                          <select 
-                            className="form-input"
-                            defaultValue=""
-                            onChange={async (e) => {
-                              if (!e.target.value) return;
-                              try {
-                                await assignFaceToCluster(id, face.id, parseInt(e.target.value));
-                                loadClusters();
-                                loadUnassignedFaces();
-                              } catch (err) {
-                                alert('Failed to assign face.');
-                              }
-                            }}
-                            style={{ padding: '6px 8px', fontSize: 12, marginBottom: 6 }}
-                          >
-                            <option value="">Assign to existing...</option>
-                            {clusters.map(c => (
-                              <option key={c.id} value={c.id}>
-                                {c.name} ({c.face_count} faces)
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                        
-                        {/* Create new cluster */}
-                        <button 
-                          className="btn btn-secondary btn-sm"
-                          style={{ width: '100%', justifyContent: 'center', fontSize: 11.5 }}
-                          onClick={async () => {
-                            const name = prompt('Name for this person (or leave empty):');
-                            if (name === null) return;
-                            try {
-                              await createClusterFromFace(id, face.id, name || '');
-                              loadClusters();
-                              loadUnassignedFaces();
-                            } catch (err) {
-                              alert('Failed to create cluster.');
-                            }
-                          }}
-                        >
-                          + New Identity
-                        </button>
-                      </div>
+                      <UnassignedFaceCard 
+                        key={face.id}
+                        face={face}
+                        project={project}
+                        clusters={clusters}
+                        projectId={id}
+                        onRefresh={() => {
+                          loadClusters();
+                          loadUnassignedFaces();
+                        }}
+                        onDelete={() => handleDeleteFace(face.id, false)}
+                        onViewImage={handleViewFaceImage}
+                      />
                     ))}
                   </div>
                 </div>
@@ -1084,6 +1220,7 @@ export default function ProjectView() {
                                 src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/faces/face_${item.face_id}.jpg`}
                                 alt={item.student_name}
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                onClick={() => handleViewFaceImage({ image_id: item.image_id })}
                                 onError={(e) => { e.target.style.display = 'none'; }}
                               />
                             )}
@@ -1101,9 +1238,13 @@ export default function ProjectView() {
                       {page.items.map((item, i) => (
                         <div key={i} style={{ width: '80%', height: '80%', background: '#e0e0e8', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', position: 'relative' }}>
                           <img 
-                            src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/thumbnails/${item.image_thumb.split('/').pop().split('\\').pop()}`}
+                            src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/originals/${item.image_original.split('/').pop().split('\\').pop()}`}
                             alt="Group"
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                            onClick={() => setViewingImage({
+                              url: `${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/originals/${item.image_original.split('/').pop().split('\\').pop()}`,
+                              filename: "Group Photo"
+                            })}
                             onError={(e) => { e.target.style.display = 'none'; }}
                           />
                           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', color: 'white' }}>
@@ -1178,19 +1319,25 @@ export default function ProjectView() {
                       <img 
                         src={`${API_BASE}/files/${project?.name.replace(/ /g, "_").toLowerCase()}/faces/face_${face.id}.jpg`}
                         alt={`Face #${face.id}`}
-                        style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }}
+                        style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
+                        onClick={() => handleViewFaceImage(face)}
                         onError={(e) => { e.target.style.display = 'none'; }}
                       />
                       <div style={{ padding: '8px 10px', fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)' }}>
                         <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>#{face.id}</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ color: 'var(--text-secondary)' }} title="Cluster Membership Confidence">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button 
+                            onClick={() => handleUnassignFace(face.id)}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, fontSize: 13 }}
+                            title="Remove from this identity (return to queue)"
+                          >↩️</button>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: 10 }}>
                             {Math.round(face.cluster_confidence * 100)}%
                           </span>
                           <button 
                             onClick={() => handleDeleteFace(face.id, true)}
                             style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0, fontSize: 13 }}
-                            title="Delete Face Crop"
+                            title="Delete Face Crop Permanently"
                           >🗑️</button>
                         </div>
                       </div>
@@ -1202,6 +1349,9 @@ export default function ProjectView() {
           </div>
         </div>
       )}
+
+      {/* Full Image Overlay */}
+      <FullImageOverlay image={viewingImage} onClose={() => setViewingImage(null)} />
 
     </div>
   );

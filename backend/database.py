@@ -112,6 +112,17 @@ def init_db():
             FOREIGN KEY (cluster_b) REFERENCES clusters(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS hard_negatives (
+            project_id INTEGER NOT NULL,
+            face_id_a INTEGER NOT NULL,
+            face_id_b INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (project_id, face_id_a, face_id_b),
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (face_id_a) REFERENCES faces(id) ON DELETE CASCADE,
+            FOREIGN KEY (face_id_b) REFERENCES faces(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_images_project ON images(project_id);
         CREATE INDEX IF NOT EXISTS idx_faces_image ON faces(image_id);
         CREATE INDEX IF NOT EXISTS idx_faces_project ON faces(project_id);
