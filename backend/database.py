@@ -67,6 +67,7 @@ def init_db():
             face_size REAL DEFAULT 0.0,
             detector_confidence REAL DEFAULT 0.0,
             cluster_confidence REAL DEFAULT 0.0,
+            quality_score REAL DEFAULT 0.0,
             pose_pitch REAL DEFAULT 0.0,
             pose_yaw REAL DEFAULT 0.0,
             pose_roll REAL DEFAULT 0.0,
@@ -84,6 +85,7 @@ def init_db():
             face_count INTEGER DEFAULT 0,
             representative_face_id INTEGER DEFAULT NULL,
             confidence REAL DEFAULT 0.0,
+            is_verified INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
@@ -118,6 +120,22 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_students_project ON students(project_id);
         CREATE INDEX IF NOT EXISTS idx_cooccurrences_project ON co_occurrences(project_id);
     """)
+
+    # Safe migrations for existing databases
+    try:
+        cursor.execute("ALTER TABLE faces ADD COLUMN quality_score REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE faces ADD COLUMN suggested_cluster_id INTEGER DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE clusters ADD COLUMN is_verified INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
     conn.close()

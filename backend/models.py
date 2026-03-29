@@ -58,6 +58,15 @@ class ClusterUpdate(BaseModel):
     name: str
 
 
+class CreateClusterRequest(BaseModel):
+    name: Optional[str] = ""
+
+
+class AssignFaceRequest(BaseModel):
+    cluster_id: int
+
+
+
 class ProcessingStatusResponse(BaseModel):
     status: str
     progress: float

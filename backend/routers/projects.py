@@ -7,7 +7,7 @@ from PIL import Image
 import pandas as pd
 
 from database import get_connection
-from models import ProjectCreate, ProjectResponse, ImageResponse, StudentResponse, ClusterResponse, ClusterUpdate
+from models import ProjectCreate, ProjectResponse, ImageResponse, StudentResponse, ClusterResponse, ClusterUpdate, CreateClusterRequest, AssignFaceRequest
 
 import face_worker
 import album_builder
@@ -303,6 +303,99 @@ def get_students(project_id: int):
     finally:
         conn.close()
 
+
+@router.post("/{project_id}/students", response_model=StudentResponse)
+def create_student(project_id: int, payload: dict):
+    """Create a single student manually."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        name = payload.get("name", "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Student name is required.")
+
+        class_name = payload.get("class_name", "").strip()
+        student_number = payload.get("student_number", "").strip()
+
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO students (project_id, name, class_name, student_number) VALUES (?, ?, ?, ?)",
+            (project_id, name, class_name, student_number),
+        )
+        conn.commit()
+
+        new_row = conn.execute("SELECT * FROM students WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return dict(new_row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.put("/{project_id}/students/{student_id}", response_model=StudentResponse)
+def update_student(project_id: int, student_id: int, payload: dict):
+    """Update a single student's details."""
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT * FROM students WHERE id = ? AND project_id = ?", (student_id, project_id)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        name = payload.get("name", existing["name"]).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Student name is required.")
+
+        class_name = payload.get("class_name", existing["class_name"]).strip()
+        student_number = payload.get("student_number", existing["student_number"]).strip()
+
+        conn.execute(
+            "UPDATE students SET name = ?, class_name = ?, student_number = ? WHERE id = ? AND project_id = ?",
+            (name, class_name, student_number, student_id, project_id),
+        )
+        conn.commit()
+
+        updated = conn.execute("SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
+        return dict(updated)
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/{project_id}/students/{student_id}")
+def delete_student(project_id: int, student_id: int):
+    """Delete a single student."""
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM students WHERE id = ? AND project_id = ?", (student_id, project_id)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        conn.execute("DELETE FROM students WHERE id = ? AND project_id = ?", (student_id, project_id))
+        conn.commit()
+        return {"message": "Student deleted successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
 @router.post("/{project_id}/process")
 def start_processing(project_id: int, background_tasks: BackgroundTasks):
     """Start face detection and clustering in the background."""
@@ -340,12 +433,31 @@ def get_clusters(project_id: int):
     finally:
         conn.close()
 
+
+@router.get("/{project_id}/clusters/{cluster_id}/faces")
+def get_cluster_faces(project_id: int, cluster_id: int):
+    """Get all faces belonging to a specific cluster (for the cluster detail modal)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, image_id, bbox_x, bbox_y, bbox_w, bbox_h,
+                      sharpness, face_size, detector_confidence, cluster_confidence
+               FROM faces 
+               WHERE project_id = ? AND cluster_id = ?
+               ORDER BY sharpness DESC""",
+            (project_id, cluster_id)
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 @router.put("/{project_id}/clusters/{cluster_id}")
 def update_cluster_name(project_id: int, cluster_id: int, payload: ClusterUpdate):
     """Update a cluster's name (Tagging)."""
     conn = get_connection()
     try:
-        conn.execute("UPDATE clusters SET name = ? WHERE id = ? AND project_id = ?", (payload.name, cluster_id, project_id))
+        conn.execute("UPDATE clusters SET name = ?, is_verified = 1 WHERE id = ? AND project_id = ?", (payload.name, cluster_id, project_id))
         
         # Try to link to a student if exact name match
         student = conn.execute("SELECT id FROM students WHERE project_id = ? AND name = ?", (project_id, payload.name)).fetchone()
@@ -357,6 +469,257 @@ def update_cluster_name(project_id: int, cluster_id: int, payload: ClusterUpdate
         return {"message": "Cluster name updated."}
     finally:
         conn.close()
+
+
+@router.delete("/{project_id}/clusters/{cluster_id}")
+def delete_cluster(project_id: int, cluster_id: int):
+    """Delete a cluster and unassign all its faces (faces move back to review queue)."""
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM clusters WHERE id = ? AND project_id = ?", (cluster_id, project_id)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cluster not found")
+        
+        # Unassign all faces — they return to the review queue
+        conn.execute(
+            "UPDATE faces SET cluster_id = NULL, cluster_confidence = 0.0 WHERE cluster_id = ? AND project_id = ?",
+            (cluster_id, project_id)
+        )
+        # Unlink students
+        conn.execute(
+            "UPDATE students SET cluster_id = NULL WHERE cluster_id = ?", (cluster_id,)
+        )
+        conn.execute("DELETE FROM clusters WHERE id = ? AND project_id = ?", (cluster_id, project_id))
+        conn.commit()
+        return {"message": "Cluster deleted. Faces moved to review queue."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/{project_id}/unassigned-faces")
+def get_unassigned_faces(project_id: int):
+    """
+    Review Queue: returns faces that passed quality gates but weren't auto-clustered.
+    Ordered by quality_score DESC so the best candidates appear first.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, image_id, bbox_x, bbox_y, bbox_w, bbox_h, 
+                      sharpness, face_size, detector_confidence, quality_score, suggested_cluster_id
+               FROM faces 
+               WHERE project_id = ? AND cluster_id IS NULL
+               ORDER BY quality_score DESC""",
+            (project_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@router.post("/{project_id}/faces/{face_id}/assign")
+def assign_face_to_cluster(project_id: int, face_id: int, payload: AssignFaceRequest):
+    """Assign a face from the review queue to an existing cluster."""
+    conn = get_connection()
+    try:
+        cluster_id = payload.cluster_id
+        if not cluster_id:
+            raise HTTPException(status_code=400, detail="cluster_id is required")
+        
+        face = conn.execute(
+            "SELECT id FROM faces WHERE id = ? AND project_id = ?", (face_id, project_id)
+        ).fetchone()
+        if not face:
+            raise HTTPException(status_code=404, detail="Face not found")
+        
+        cluster = conn.execute(
+            "SELECT id FROM clusters WHERE id = ? AND project_id = ?", (cluster_id, project_id)
+        ).fetchone()
+        if not cluster:
+            raise HTTPException(status_code=404, detail="Cluster not found")
+        
+        conn.execute(
+            "UPDATE faces SET cluster_id = ?, cluster_confidence = 1.0 WHERE id = ?",
+            (cluster_id, face_id)
+        )
+        new_count = conn.execute(
+            "SELECT COUNT(*) as c FROM faces WHERE cluster_id = ?", (cluster_id,)
+        ).fetchone()["c"]
+        conn.execute("UPDATE clusters SET face_count = ?, is_verified = 1 WHERE id = ?", (new_count, cluster_id))
+        conn.commit()
+        return {"message": "Face assigned to cluster."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/{project_id}/faces/{face_id}/create-cluster")
+def create_cluster_from_face(project_id: int, face_id: int, payload: CreateClusterRequest):
+    """Promote a singleton/review face into its own new cluster."""
+    conn = get_connection()
+    try:
+        face = conn.execute(
+            "SELECT id FROM faces WHERE id = ? AND project_id = ?", (face_id, project_id)
+        ).fetchone()
+        if not face:
+            raise HTTPException(status_code=404, detail="Face not found")
+        
+        name = payload.name.strip() if payload.name else "Unknown"
+        
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO clusters (project_id, name, face_count, representative_face_id, confidence, is_verified) VALUES (?, ?, 1, ?, 1.0, 1)",
+            (project_id, name, face_id)
+        )
+        cluster_id = cursor.lastrowid
+        
+        conn.execute(
+            "UPDATE faces SET cluster_id = ?, cluster_confidence = 1.0 WHERE id = ?",
+            (cluster_id, face_id)
+        )
+        
+        if name != "Unknown":
+            student = conn.execute(
+                "SELECT id FROM students WHERE project_id = ? AND name = ?", (project_id, name)
+            ).fetchone()
+            if student:
+                conn.execute("UPDATE clusters SET student_id = ? WHERE id = ?", (student["id"], cluster_id))
+                conn.execute("UPDATE students SET cluster_id = ? WHERE id = ?", (cluster_id, student["id"]))
+        
+        conn.commit()
+        return {"message": "New cluster created.", "cluster_id": cluster_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/{project_id}/faces/{face_id}")
+def delete_face(project_id: int, face_id: int):
+    """Delete a single face crop/embedding and remove from cluster."""
+    conn = get_connection()
+    try:
+        face = conn.execute(
+            "SELECT id, cluster_id, thumbnail_path, embedding_path FROM faces WHERE id = ? AND project_id = ?",
+            (face_id, project_id)
+        ).fetchone()
+        if not face:
+            raise HTTPException(status_code=404, detail="Face not found")
+        
+        cluster_id = face["cluster_id"]
+        
+        # Delete files
+        for fpath in [face["thumbnail_path"], face["embedding_path"]]:
+            if fpath:
+                p = Path(fpath)
+                if p.exists():
+                    p.unlink()
+        
+        conn.execute("DELETE FROM faces WHERE id = ?", (face_id,))
+        
+        # Update cluster face count
+        if cluster_id:
+            new_count = conn.execute(
+                "SELECT COUNT(*) as c FROM faces WHERE cluster_id = ?", (cluster_id,)
+            ).fetchone()["c"]
+            if new_count == 0:
+                conn.execute("DELETE FROM clusters WHERE id = ?", (cluster_id,))
+            else:
+                conn.execute("UPDATE clusters SET face_count = ? WHERE id = ?", (new_count, cluster_id))
+                # Update representative if the deleted face was the representative
+                rep = conn.execute("SELECT representative_face_id FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
+                if rep and rep["representative_face_id"] == face_id:
+                    best = conn.execute(
+                        "SELECT id FROM faces WHERE cluster_id = ? ORDER BY sharpness * face_size DESC LIMIT 1",
+                        (cluster_id,)
+                    ).fetchone()
+                    if best:
+                        conn.execute("UPDATE clusters SET representative_face_id = ? WHERE id = ?", (best["id"], cluster_id))
+        
+        conn.commit()
+        return {"message": "Face deleted."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.delete("/{project_id}/images/{image_id}")
+def delete_image(project_id: int, image_id: int):
+    """Delete an image and all its associated face crops/embeddings."""
+    conn = get_connection()
+    try:
+        img = conn.execute(
+            "SELECT id, original_path, thumbnail_path FROM images WHERE id = ? AND project_id = ?",
+            (image_id, project_id)
+        ).fetchone()
+        if not img:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Get all faces for this image to clean up clusters
+        faces = conn.execute(
+            "SELECT id, cluster_id, thumbnail_path, embedding_path FROM faces WHERE image_id = ?",
+            (image_id,)
+        ).fetchall()
+        
+        affected_clusters = set()
+        for face in faces:
+            if face["cluster_id"]:
+                affected_clusters.add(face["cluster_id"])
+            for fpath in [face["thumbnail_path"], face["embedding_path"]]:
+                if fpath:
+                    p = Path(fpath)
+                    if p.exists():
+                        p.unlink()
+        
+        # Delete all faces for this image
+        conn.execute("DELETE FROM faces WHERE image_id = ?", (image_id,))
+        
+        # Update affected cluster counts
+        for cid in affected_clusters:
+            new_count = conn.execute(
+                "SELECT COUNT(*) as c FROM faces WHERE cluster_id = ?", (cid,)
+            ).fetchone()["c"]
+            if new_count == 0:
+                conn.execute("DELETE FROM clusters WHERE id = ?", (cid,))
+            else:
+                conn.execute("UPDATE clusters SET face_count = ? WHERE id = ?", (new_count, cid))
+        
+        # Delete image files
+        for fpath in [img["original_path"], img["thumbnail_path"]]:
+            if fpath:
+                p = Path(fpath)
+                if p.exists():
+                    p.unlink()
+        
+        conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
+        conn.commit()
+        return {"message": "Image and associated faces deleted."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
 
 @router.post("/{project_id}/album/generate")
 def api_generate_album(project_id: int):

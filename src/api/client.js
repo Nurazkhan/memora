@@ -35,6 +35,9 @@ export const uploadStudentList = (id, formData) =>
     headers: { 'Content-Type': 'multipart/form-data' },
   });
 export const getStudents = (id) => api.get(`/projects/${id}/students`);
+export const createStudent = (id, data) => api.post(`/projects/${id}/students`, data);
+export const updateStudent = (id, studentId, data) => api.put(`/projects/${id}/students/${studentId}`, data);
+export const deleteStudent = (id, studentId) => api.delete(`/projects/${id}/students/${studentId}`);
 
 // Processing
 export const startProcessing = (id) => api.post(`/projects/${id}/process`);
@@ -42,7 +45,20 @@ export const getProgress = (id) => api.get(`/projects/${id}/progress`);
 
 // Clusters
 export const getClusters = (id) => api.get(`/projects/${id}/clusters`);
+export const getClusterFaces = (projectId, clusterId) => api.get(`/projects/${projectId}/clusters/${clusterId}/faces`);
 export const assignClusterName = (projectId, clusterId, name) =>
   api.put(`/projects/${projectId}/clusters/${clusterId}`, { name });
+export const deleteCluster = (projectId, clusterId) => api.delete(`/projects/${projectId}/clusters/${clusterId}`);
+
+// Review Queue (unassigned faces) & individual face management
+export const getUnassignedFaces = (id) => api.get(`/projects/${id}/unassigned-faces`);
+export const assignFaceToCluster = (projectId, faceId, clusterId) =>
+  api.post(`/projects/${projectId}/faces/${faceId}/assign`, { cluster_id: clusterId });
+export const createClusterFromFace = (projectId, faceId, name) =>
+  api.post(`/projects/${projectId}/faces/${faceId}/create-cluster`, { name });
+export const deleteFace = (projectId, faceId) => api.delete(`/projects/${projectId}/faces/${faceId}`);
+
+// Image Deletion
+export const deleteImage = (projectId, imageId) => api.delete(`/projects/${projectId}/images/${imageId}`);
 
 export default api;
