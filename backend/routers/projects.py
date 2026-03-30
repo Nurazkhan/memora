@@ -785,21 +785,25 @@ def delete_image(project_id: int, image_id: int):
 
 
 @router.post("/{project_id}/album/generate")
-def api_generate_album(project_id: int):
-    """Generate and return an album draft using Best-Photo selection and Co-occurrences."""
+def api_generate_album(project_id: int, payload: dict = None):
+    """Generate and return an album draft using Best-Photo selection and Co-occurrences, or a provided template."""
     conn = get_connection()
     try:
         row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
             
-        pages = album_builder.generate_album(project_id)
+        template_id = payload.get("template_id") if payload else None
+        target_cluster_id = payload.get("target_cluster_id") if payload else None
+
+        pages = album_builder.generate_album(project_id, template_id, target_cluster_id=target_cluster_id)
         
         conn.execute("UPDATE projects SET status = 'completed' WHERE id = ?", (project_id,))
         conn.commit()
         
         return {"pages": pages}
     except Exception as e:
+        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()

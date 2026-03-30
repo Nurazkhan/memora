@@ -130,6 +130,16 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_clusters_project ON clusters(project_id);
         CREATE INDEX IF NOT EXISTS idx_students_project ON students(project_id);
         CREATE INDEX IF NOT EXISTS idx_cooccurrences_project ON co_occurrences(project_id);
+
+        CREATE TABLE IF NOT EXISTS templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            page_size TEXT DEFAULT 'A4',
+            layout_json TEXT NOT NULL,
+            background_path TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
 
     # Safe migrations for existing databases
@@ -146,6 +156,14 @@ def init_db():
     try:
         cursor.execute("ALTER TABLE clusters ADD COLUMN is_verified INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
+        pass
+
+    try:
+        # Check if templates table exists (migration helper)
+        cursor.execute("SELECT 1 FROM templates LIMIT 1")
+    except sqlite3.OperationalError:
+        # If it doesn't exist, it will be created by the executescript above anyway,
+        # but this is a good place for adding columns later.
         pass
 
     conn.commit()

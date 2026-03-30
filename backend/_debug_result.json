@@ -1,0 +1,143 @@
+[
+  {
+    "template_id": 2,
+    "name": "Untitled Template",
+    "pages_count": 3
+  },
+  {
+    "page_idx": 0,
+    "page_name": "Page 1",
+    "orientation": "portrait",
+    "objects": [
+      {
+        "type": "frame",
+        "role": "individual",
+        "x": 104,
+        "y": 108,
+        "w": 816,
+        "h": 816
+      }
+    ]
+  },
+  {
+    "page_idx": 1,
+    "page_name": "Page 2",
+    "orientation": "portrait",
+    "objects": [
+      {
+        "type": "frame",
+        "role": "group",
+        "x": 247,
+        "y": 77,
+        "w": 497,
+        "h": 497
+      },
+      {
+        "type": "frame",
+        "role": "group",
+        "x": 249,
+        "y": 683,
+        "w": 510,
+        "h": 510
+      }
+    ]
+  },
+  {
+    "page_idx": 2,
+    "page_name": "Page 3",
+    "orientation": "portrait",
+    "objects": [
+      {
+        "type": "frame",
+        "role": "class",
+        "x": 213,
+        "y": 105,
+        "w": 587,
+        "h": 587
+      }
+    ]
+  },
+  {
+    "clusters": [
+      {
+        "id": 2,
+        "name": "Cluster 0",
+        "project": 1
+      },
+      {
+        "id": 6,
+        "name": "Cluster 0",
+        "project": 3
+      },
+      {
+        "id": 11,
+        "name": "Cluster 1",
+        "project": 4
+      },
+      {
+        "id": 12,
+        "name": "Cluster 2",
+        "project": 4
+      },
+      {
+        "id": 13,
+        "name": "Cluster 3",
+        "project": 4
+      },
+      {
+        "id": 14,
+        "name": "Cluster 4",
+        "project": 4
+      },
+      {
+        "id": 15,
+        "name": "Cluster 5",
+        "project": 4
+      },
+      {
+        "id": 16,
+        "name": "Cluster 6",
+        "project": 4
+      },
+      {
+        "id": 17,
+        "name": "Cluster 7",
+        "project": 4
+      },
+      {
+        "id": 18,
+        "name": "Cluster 8",
+        "project": 4
+      }
+    ]
+  },
+  {
+    "images": [
+      {
+        "id": 1,
+        "fn": "IMG04500_resized.jpg",
+        "path": "C:\\Users\\nuraz\\Documents\\CODING\\Memora\\backend\\projects_data\\dpmok2026\\originals\\af74c9fea4d74fd7b4e58b44cd9d8a7e.jpg"
+      },
+      {
+        "id": 2,
+        "fn": "IMG04503_resized.jpg",
+        "path": "C:\\Users\\nuraz\\Documents\\CODING\\Memora\\backend\\projects_data\\dpmok2026\\originals\\97685b5923134485ac1bdffd66a79d78.jpg"
+      },
+      {
+        "id": 3,
+        "fn": "IMG04505_resized.jpg",
+        "path": "C:\\Users\\nuraz\\Documents\\CODING\\Memora\\backend\\projects_data\\dpmok2026\\originals\\f873af05fb01415f926382830284b531.jpg"
+      },
+      {
+        "id": 4,
+        "fn": "IMG04508_resized.jpg",
+        "path": "C:\\Users\\nuraz\\Documents\\CODING\\Memora\\backend\\projects_data\\dpmok2026\\originals\\ba23636cc8594b80bc94f49101c347c9.jpg"
+      },
+      {
+        "id": 5,
+        "fn": "IMG04511_resized.jpg",
+        "path": "C:\\Users\\nuraz\\Documents\\CODING\\Memora\\backend\\projects_data\\dpmok2026\\originals\\c0fcb3fdcf5f4d3f8cbf92dab61cade8.jpg"
+      }
+    ]
+  }
+]

@@ -8,3 +8,4 @@ backend/venv/
 thumbnails/
 .env
 *.log
+backend/projects_data/*

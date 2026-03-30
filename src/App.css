@@ -97,6 +97,11 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  transition: width var(--transition);
+}
+
+.sidebar.collapsed {
+  width: 70px;
 }
 
 .sidebar-header {
@@ -130,6 +135,7 @@ body {
   letter-spacing: -0.5px;
   background: linear-gradient(135deg, var(--text-primary), var(--accent-hover));
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
@@ -158,12 +164,22 @@ body {
   text-decoration: none;
   font-size: 13.5px;
   font-weight: 500;
-  transition: all var(--transition);
-  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 4px;
   border: none;
-  background: none;
+  background: transparent;
   width: 100%;
   text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-link.collapsed {
+  justify-content: center;
+  padding: 10px;
+}
+
+.sidebar-link.collapsed .sidebar-link-icon {
+  margin: 0;
 }
 
 .sidebar-link:hover {

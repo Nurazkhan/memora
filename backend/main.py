@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from database import init_db
-from routers import projects
+from routers import projects, templates
 
 app = FastAPI(title="Memora API", version="1.0.0")
 
@@ -24,6 +24,7 @@ app.mount("/files", StaticFiles(directory=str(PROJECTS_DIR)), name="files")
 
 # Include routers
 app.include_router(projects.router)
+app.include_router(templates.router)
 
 
 @app.on_event("startup")

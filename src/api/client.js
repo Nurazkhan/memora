@@ -63,4 +63,18 @@ export const deleteFace = (projectId, faceId) => api.delete(`/projects/${project
 // Image Deletion
 export const deleteImage = (projectId, imageId) => api.delete(`/projects/${projectId}/images/${imageId}`);
 
+// Templates
+export const getTemplates = () => api.get('/templates');
+export const getTemplate = (id) => api.get(`/templates/${id}`);
+export const createTemplate = (data) => api.post('/templates', data);
+export const updateTemplate = (id, data) => api.put(`/templates/${id}`, data);
+export const deleteTemplate = (id) => api.delete(`/templates/${id}`);
+export const uploadTemplateBackground = (id, formData) =>
+  api.post(`/templates/${id}/background`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+// Album Generation
+export const generateAlbum = (id, payload) => api.post(`/projects/${id}/album/generate`, payload);
+
 export default api;

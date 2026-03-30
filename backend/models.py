@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Any, Dict
 from datetime import datetime
 
 
@@ -73,3 +73,19 @@ class ProcessingStatusResponse(BaseModel):
     message: str
     total_images: int
     processed_images: int
+
+
+class TemplateCreate(BaseModel):
+    name: str
+    page_size: Optional[str] = "A4"
+    layout_json: Dict[str, Any]
+
+
+class TemplateResponse(BaseModel):
+    id: int
+    name: str
+    page_size: str
+    layout_json: Dict[str, Any]
+    background_path: Optional[str] = ""
+    created_at: str
+    updated_at: str

@@ -9,6 +9,8 @@ import {
   unassignFace, getImage 
 } from '../api/client';
 import Dropzone from '../components/Dropzone';
+import AlbumGenModal from '../components/modals/AlbumGenModal';
+import PhotoPickerModal from '../components/modals/PhotoPickerModal';
 import axios from 'axios';
 
 const API_BASE = 'http://127.0.0.1:8599';
@@ -216,6 +218,15 @@ export default function ProjectView() {
   const [albumPages, setAlbumPages] = useState([]);
   const [generatingAlbum, setGeneratingAlbum] = useState(false);
   const [viewingImage, setViewingImage] = useState(null);
+  const [showGenModal, setShowGenModal] = useState(false);
+  
+  const [pickingPhotoFor, setPickingPhotoFor] = useState(null);
+  const [photosSearch, setPhotosSearch] = useState('');
+  const [photosSort, setPhotosSort] = useState('date');
+  const [clustersSearch, setClustersSearch] = useState('');
+  const [clustersSort, setClustersSort] = useState('count');
+  const [studentsSearch, setStudentsSearch] = useState('');
+  const [studentsSort, setStudentsSort] = useState('name');
 
   useEffect(() => {
     loadProject();
@@ -411,21 +422,6 @@ export default function ProjectView() {
       console.error('Failed to assign name:', err);
     }
   }
-
-  async function handleGenerateAlbum() {
-    setGeneratingAlbum(true);
-    try {
-      const res = await axios.post(`${API_BASE}/projects/${id}/album/generate`);
-      setAlbumPages(res.data.pages || []);
-      loadProject();
-    } catch (err) {
-      console.error('Failed to generate album:', err);
-      alert('Failed to generate album.');
-    } finally {
-      setGeneratingAlbum(false);
-    }
-  }
-
   async function handleImageDrop(files) {
     if (files.length === 0) return;
     setUploadingImages(true);
@@ -693,7 +689,14 @@ export default function ProjectView() {
             <Dropzone onDrop={handleImageDrop} label={uploadingImages ? `Uploading... ${uploadProgress}%` : "Drag & drop photos here, or click to upload"} />
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 600 }}>Gallery ({images.length})</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600 }}>Gallery ({images.length})</h3>
+              <input type="text" className="form-input" placeholder="Search filename..." value={photosSearch} onChange={e => setPhotosSearch(e.target.value)} style={{ padding: '4px 8px', fontSize: 12, width: 160 }} />
+              <select className="form-input" value={photosSort} onChange={e => setPhotosSort(e.target.value)} style={{ padding: '4px 8px', fontSize: 12 }}>
+                <option value="date">Sort by Date</option>
+                <option value="name">Sort by Name</option>
+              </select>
+            </div>
             <button className="btn btn-secondary btn-sm" onClick={loadImages}>Refresh</button>
           </div>
           {images.length === 0 ? (
@@ -702,7 +705,13 @@ export default function ProjectView() {
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
-              {images.map(img => {
+              {images
+                 .filter(img => (img.filename || '').toLowerCase().includes(photosSearch.toLowerCase()))
+                 .sort((a,b) => {
+                    if (photosSort === 'name') return (a.filename || '').localeCompare(b.filename || '');
+                    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+                 })
+                 .map(img => {
                 // Determine relative path for static serving
                 // e.g. "projects_data/<project_name>/thumbnails/xyz.jpg" -> project path part
                 const thumbPathParts = img.thumbnail_path.replace(/\\/g, '/').split('/projects_data/');
@@ -769,7 +778,14 @@ export default function ProjectView() {
           </div>
           
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h3 style={{ fontSize: 16, fontWeight: 600 }}>Students ({students.length})</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600 }}>Students ({students.length})</h3>
+              <input type="text" className="form-input" placeholder="Search students..." value={studentsSearch} onChange={e => setStudentsSearch(e.target.value)} style={{ padding: '4px 8px', fontSize: 12, width: 160 }} />
+              <select className="form-input" value={studentsSort} onChange={e => setStudentsSort(e.target.value)} style={{ padding: '4px 8px', fontSize: 12 }}>
+                <option value="name">Sort by Name</option>
+                <option value="number">Sort by Number</option>
+              </select>
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button 
                 className={`btn btn-sm ${editMode ? 'btn-primary' : 'btn-secondary'}`}
@@ -808,7 +824,12 @@ export default function ProjectView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map(s => (
+                  {students.filter(s => (s.name || '').toLowerCase().includes(studentsSearch.toLowerCase()) || (s.student_number || '').includes(studentsSearch))
+                    .sort((a,b) => {
+                      if (studentsSort === 'name') return (a.name || '').localeCompare(b.name || '');
+                      if (studentsSort === 'number') return (a.student_number || '').localeCompare(b.student_number || '');
+                      return 0;
+                    }).map(s => (
                     <tr 
                       key={s.id} 
                       style={{ 
@@ -1019,6 +1040,10 @@ export default function ProjectView() {
         </div>
       )}
 
+      <datalist id="student_identities_list">
+        {students.map(s => <option key={s.id} value={s.name} />)}
+      </datalist>
+
       {activeTab === 'faces' && (
         <div>
           {/* Auto-Clustered Identities */}
@@ -1027,7 +1052,15 @@ export default function ProjectView() {
               <h3 style={{ fontSize: 16, fontWeight: 600 }}>Auto-Clustered Identities ({clusters.length})</h3>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>High-confidence identity groups detected automatically</p>
             </div>
-            <button className="btn btn-secondary btn-sm" onClick={() => { loadClusters(); loadUnassignedFaces(); }}>Refresh</button>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <input type="text" className="form-input" placeholder="Search identities..." value={clustersSearch} onChange={e => setClustersSearch(e.target.value)} style={{ padding: '6px 10px', fontSize: 12, width: 180 }} />
+              <select className="form-input" value={clustersSort} onChange={e => setClustersSort(e.target.value)} style={{ padding: '6px 10px', fontSize: 12 }}>
+                <option value="count">Sort by Face Count</option>
+                <option value="name">Sort by Name</option>
+                <option value="confidence">Sort by Confidence</option>
+              </select>
+              <button className="btn btn-secondary btn-sm" onClick={() => { loadClusters(); loadUnassignedFaces(); }}>Refresh</button>
+            </div>
           </div>
           
           {clusters.length === 0 && unassignedFaces.length === 0 ? (
@@ -1046,7 +1079,12 @@ export default function ProjectView() {
               
               {clusters.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20, marginBottom: 36 }}>
-                  {clusters.map(cluster => (
+                  {clusters.filter(c => (c.name || 'Unknown').toLowerCase().includes(clustersSearch.toLowerCase())).sort((a,b) => {
+                    if (clustersSort === 'count') return b.face_count - a.face_count;
+                    if (clustersSort === 'name') return (a.name || 'Unknown').localeCompare(b.name || 'Unknown');
+                    if (clustersSort === 'confidence') return (b.confidence || 0) - (a.confidence || 0);
+                    return 0;
+                  }).map(cluster => (
                     <div key={cluster.id} className="card" style={{ padding: 16 }}>
                       <div 
                         style={{ display: 'flex', gap: 16, marginBottom: 16, cursor: 'pointer', borderRadius: 'var(--radius-sm)', transition: 'background 0.2s', padding: 4, margin: -4 }} 
@@ -1086,6 +1124,7 @@ export default function ProjectView() {
                       
                       <div style={{ display: 'flex', gap: 8 }}>
                         <input 
+                          list="student_identities_list"
                           type="text" 
                           className="form-input" 
                           placeholder="Enter name..."
@@ -1176,10 +1215,10 @@ export default function ProjectView() {
               </button>
               <button 
                 className="btn btn-primary" 
-                onClick={handleGenerateAlbum}
+                onClick={() => setShowGenModal(true)}
                 disabled={generatingAlbum}
               >
-                {generatingAlbum ? 'Building...' : (albumPages.length > 0 ? 'Re-generate Layout' : 'Generate Album')}
+                {generatingAlbum ? 'Building...' : (albumPages.length > 0 ? '🛠️ Re-design Layout' : '🛠️ Design & Generate Album')}
               </button>
             </div>
           </div>
@@ -1195,19 +1234,20 @@ export default function ProjectView() {
               {albumPages.map((page, idx) => (
                 <div key={idx} style={{ 
                   width: '100%', maxWidth: '800px', 
-                  aspectRatio: '1.414', // A4 Landscape ratio
-                  background: '#f0f0f5', // White-ish for print preview
+                  aspectRatio: page?.orientation === 'portrait' ? '0.707' : '1.414',
+                  background: 'white',
                   padding: 40,
                   boxShadow: 'var(--shadow-lg)',
                   borderRadius: 'var(--radius-sm)',
-                  position: 'relative'
+                  position: 'relative',
+                  overflow: 'hidden'
                 }}>
-                  <h4 style={{ color: '#12121a', fontSize: 24, fontWeight: 700, marginBottom: 24, textAlign: 'center', textTransform: 'uppercase', letterSpacing: 2 }}>{page.title}</h4>
+                  <h4 style={{ color: '#12121a', fontSize: 24, fontWeight: 700, marginBottom: 24, textAlign: 'center', textTransform: 'uppercase', letterSpacing: 2 }}>{page?.title || 'Untitled Page'}</h4>
                   
-                  {page.type === 'individual' && (
+                  {page?.type === 'individual' && (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, height: 'calc(100% - 60px)' }}>
-                      {page.items.map(item => (
-                        <div key={item.student_id} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                      {(page?.items || []).map(item => (
+                        <div key={item?.student_id || Math.random()} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                           <div style={{ 
                             flex: 1, 
                             background: '#e0e0e8',
@@ -1215,43 +1255,113 @@ export default function ProjectView() {
                             position: 'relative',
                             boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
                           }}>
-                            {item.face_thumb && (
+                            {item?.face_thumb && (
                               <img 
-                                src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/faces/face_${item.face_id}.jpg`}
-                                alt={item.student_name}
+                                src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/faces/face_${item?.face_id}.jpg`}
+                                alt={item?.student_name || 'Student'}
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                onClick={() => handleViewFaceImage({ image_id: item.image_id })}
+                                onClick={() => handleViewFaceImage({ image_id: item?.image_id })}
                                 onError={(e) => { e.target.style.display = 'none'; }}
                               />
                             )}
                           </div>
                           <div style={{ textAlign: 'center', marginTop: 12, padding: '8px 0', background: 'white', color: '#1a1a28', fontWeight: 600, fontSize: 13, borderBottom: '2px solid var(--accent)' }}>
-                            {item.student_name}
+                            {item?.student_name || 'Unknown'}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {page.type === 'group' && (
+                  {page?.type === 'group' && (
                     <div style={{ height: 'calc(100% - 60px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {page.items.map((item, i) => (
+                      {(page?.items || []).map((item, i) => (
                         <div key={i} style={{ width: '80%', height: '80%', background: '#e0e0e8', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', position: 'relative' }}>
-                          <img 
-                            src={`${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/originals/${item.image_original.split('/').pop().split('\\').pop()}`}
-                            alt="Group"
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
-                            onClick={() => setViewingImage({
-                              url: `${API_BASE}/files/${project.name.replace(/ /g, "_").toLowerCase()}/originals/${item.image_original.split('/').pop().split('\\').pop()}`,
-                              filename: "Group Photo"
-                            })}
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                          />
+                          {item?.image_original && (
+                            <img 
+                              src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${(item.image_original || '').split('/').pop().split('\\').pop()}`}
+                              alt="Group"
+                              style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                              onClick={() => setViewingImage({
+                                url: `${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${(item.image_original || '').split('/').pop().split('\\').pop()}`,
+                                filename: "Group Photo"
+                              })}
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          )}
                           <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', color: 'white' }}>
-                            <p style={{ fontSize: 14, fontWeight: 500 }}>Featuring: {item.metadata}</p>
+                            <p style={{ fontSize: 14, fontWeight: 500 }}>Featuring: {item?.metadata || 'Unknown'}</p>
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {page?.type === 'template_page' && (
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+                       {(page?.items || []).map((item, itemIdx) => {
+                         const imgFile = item?.target_photo?.disk_filename || item?.target_photo?.filename || '';
+                         return (
+                         <div 
+                           key={item?.id || Math.random()} 
+                           style={{
+                             position: 'absolute',
+                             left: `${(item?.x || 0) * 100}%`,
+                             top: `${(item?.y || 0) * 100}%`,
+                             width: `${(item?.width || 0) * 100}%`,
+                             height: `${(item?.height || 0) * 100}%`,
+                             zIndex: item?.type === 'text' ? 10 : 1
+                           }}
+                         >
+                           {item?.type === 'frame' && imgFile && (
+                             <img 
+                               src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${imgFile}`}
+                               alt="Frame Content"
+                               title="Click to select a different photo for this slot"
+                               style={{ 
+                                 width: '100%', height: '100%', objectFit: 'cover', 
+                                 boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                 cursor: 'pointer',
+                                 transition: 'opacity 0.2s',
+                                 borderRadius: 4
+                               }}
+                               onMouseEnter={e => e.currentTarget.style.opacity = 0.8}
+                               onMouseLeave={e => e.currentTarget.style.opacity = 1}
+                               onClick={() => setPickingPhotoFor({ pIdx: idx, itemIdx })}
+                               onError={(e) => { e.target.style.display = 'none'; }}
+                             />
+                           )}
+                           {item?.type === 'frame' && !imgFile && (
+                             <div style={{
+                               width: '100%', height: '100%',
+                               background: 'linear-gradient(135deg, #e0e0e8 0%, #c8c8d8 100%)',
+                               display: 'flex', alignItems: 'center', justifyContent: 'center',
+                               color: '#8888aa', fontSize: 13, fontWeight: 500,
+                               cursor: 'pointer', borderRadius: 4
+                             }}
+                               onClick={() => setPickingPhotoFor({ pIdx: idx, itemIdx })}
+                             >
+                               Click to add photo
+                             </div>
+                           )}
+                           {item?.type === 'text' && (
+                             <div style={{
+                               width: '100%', height: '100%',
+                               fontSize: `${(item?.font_size || item?.fontSize || 16) / 4}px`,
+                               color: item?.fill || '#000',
+                               display: 'flex',
+                               alignItems: 'center',
+                               justifyContent: 'center',
+                               textAlign: 'center',
+                               fontWeight: 'bold',
+                               padding: 4
+                             }}>
+                               {item?.resolved_content || item?.content || ''}
+                             </div>
+                           )}
+                         </div>
+                         );
+                       })}
                     </div>
                   )}
                   
@@ -1353,6 +1463,36 @@ export default function ProjectView() {
       {/* Full Image Overlay */}
       <FullImageOverlay image={viewingImage} onClose={() => setViewingImage(null)} />
 
+      {showGenModal && (
+        <AlbumGenModal 
+          projectId={id} 
+          onClose={() => setShowGenModal(false)}
+          onGenerated={(result) => {
+            setAlbumPages(result);
+            loadProject();
+          }}
+        />
+      )}
+
+      {pickingPhotoFor && (
+        <PhotoPickerModal
+          project={project}
+          images={images}
+          onClose={() => setPickingPhotoFor(null)}
+          onSelect={(newImage) => {
+            const newPages = [...albumPages];
+            // Extract the actual filename on disk (UUID) from the original_path
+            const pathParts = (newImage.original_path || '').replace(/\\/g, '/').split('/');
+            const diskFilename = pathParts[pathParts.length - 1] || newImage.filename;
+            newPages[pickingPhotoFor.pIdx].items[pickingPhotoFor.itemIdx].target_photo = {
+              ...newImage,
+              disk_filename: diskFilename
+            };
+            setAlbumPages(newPages);
+            setPickingPhotoFor(null);
+          }}
+        />
+      )}
     </div>
   );
 }
