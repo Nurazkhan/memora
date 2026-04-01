@@ -142,13 +142,23 @@ def generate_album(project_id: int, template_id: int = None, target_cluster_id: 
                             disk_filename = os.path.basename(photo.get("original_path", ""))
                             page_items.append({
                                 **norm_obj,
+                                "recommendation_context": {
+                                    "role": role,
+                                    "target_cluster_id": target_cluster_id,
+                                },
                                 "target_photo": {
                                     **photo,
                                     "disk_filename": disk_filename
                                 }
                             })
                         else:
-                            page_items.append(norm_obj)
+                            page_items.append({
+                                **norm_obj,
+                                "recommendation_context": {
+                                    "role": role,
+                                    "target_cluster_id": target_cluster_id,
+                                },
+                            })
                                     
                     # 2. Handle Text (Variable Resolution)
                     elif obj["type"] == "text":

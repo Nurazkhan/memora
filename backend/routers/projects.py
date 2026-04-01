@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pathlib import Path
 import shutil
 import uuid
@@ -808,11 +808,108 @@ def api_generate_album(project_id: int, payload: dict = None):
     finally:
         conn.close()
 
+
+@router.post("/{project_id}/album/recommendations")
+def get_album_recommendations(project_id: int, payload: dict | None = None):
+    """Return recommended images for a replacement slot, plus access to all project images."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        payload = payload or {}
+        target_cluster_id = payload.get("target_cluster_id")
+        role = (payload.get("role") or "individual").lower()
+
+        all_images = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM images WHERE project_id = ? ORDER BY created_at DESC", (project_id,)
+            ).fetchall()
+        ]
+
+        if not target_cluster_id:
+            return {"recommended": all_images[:24], "all_images": all_images}
+
+        if role == "individual":
+            recommended_rows = conn.execute(
+                """
+                SELECT i.*, f.sharpness, f.face_size,
+                       (SELECT COUNT(*) FROM faces f2 WHERE f2.image_id = i.id) AS face_count
+                FROM faces f
+                JOIN images i ON i.id = f.image_id
+                WHERE i.project_id = ? AND f.cluster_id = ?
+                ORDER BY CASE WHEN face_count = 1 THEN 0 ELSE 1 END,
+                         (f.sharpness * f.face_size) DESC,
+                         i.created_at DESC
+                LIMIT 24
+                """,
+                (project_id, target_cluster_id),
+            ).fetchall()
+        elif role == "class":
+            recommended_rows = conn.execute(
+                """
+                SELECT i.*, COUNT(DISTINCT f2.cluster_id) AS face_count
+                FROM images i
+                JOIN faces f ON f.image_id = i.id AND f.cluster_id = ?
+                LEFT JOIN faces f2 ON f2.image_id = i.id
+                WHERE i.project_id = ?
+                GROUP BY i.id
+                HAVING face_count > 1
+                ORDER BY face_count DESC, i.created_at DESC
+                LIMIT 24
+                """,
+                (target_cluster_id, project_id),
+            ).fetchall()
+        else:
+            recommended_rows = conn.execute(
+                """
+                SELECT i.*, COUNT(DISTINCT f2.cluster_id) AS face_count
+                FROM images i
+                JOIN faces f ON f.image_id = i.id AND f.cluster_id = ?
+                LEFT JOIN faces f2 ON f2.image_id = i.id
+                WHERE i.project_id = ?
+                GROUP BY i.id
+                HAVING face_count > 1
+                ORDER BY ABS(face_count - 4) ASC, face_count DESC, i.created_at DESC
+                LIMIT 24
+                """,
+                (target_cluster_id, project_id),
+            ).fetchall()
+
+        recommended = [dict(r) for r in recommended_rows]
+        recommended_ids = {image["id"] for image in recommended}
+        remaining = [image for image in all_images if image["id"] not in recommended_ids]
+
+        return {
+            "recommended": recommended,
+            "all_images": recommended + remaining,
+        }
+    finally:
+        conn.close()
+
 @router.get("/{project_id}/album/export")
 def export_album_pdf(project_id: int):
     """Generates and downloads the Album PDF."""
     try:
         pdf_path = pdf_exporter.generate_album_pdf(project_id)
         return FileResponse(pdf_path, media_type='application/pdf', filename=Path(pdf_path).name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export PDF: {e}")
+
+
+@router.post("/{project_id}/album/export")
+def export_album_pdf_from_payload(project_id: int, payload: dict | None = None):
+    """Export the exact album draft currently shown in the UI."""
+    try:
+        pages = payload.get("pages") if payload else None
+        pdf_bytes = pdf_exporter.build_album_pdf(project_id, pages=pages)
+        filename = f"project_{project_id}_album.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export PDF: {e}")

@@ -76,5 +76,10 @@ export const uploadTemplateBackground = (id, formData) =>
 
 // Album Generation
 export const generateAlbum = (id, payload) => api.post(`/projects/${id}/album/generate`, payload);
+export const exportAlbumPdf = (id, payload) =>
+  api.post(`/projects/${id}/album/export`, payload, {
+    responseType: 'blob',
+  });
+export const getAlbumRecommendations = (id, payload) => api.post(`/projects/${id}/album/recommendations`, payload);
 
 export default api;
