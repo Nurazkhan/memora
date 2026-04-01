@@ -1,310 +1,433 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Navigator from '../components/editor/Navigator';
 import Inspector from '../components/editor/Inspector';
 import StageArea from '../components/editor/StageArea';
 import useHistory from '../hooks/useHistory';
-import { 
-  getTemplate, 
-  updateTemplate, 
-  createTemplate, 
-  uploadTemplateBackground 
+import {
+  getTemplate,
+  updateTemplate,
+  createTemplate,
+  uploadTemplateBackground,
 } from '../api/client';
+import {
+  PAGE_WIDTH,
+  createId,
+  getPageHeight,
+  getTemplateStats,
+  normalizePages,
+} from '../components/editor/templateUtils';
 
-const INITIAL_TEMPLATE = {
-  name: 'Untitled Template',
-  pages: [
-    {
-      id: 'page1',
-      name: 'Page 1',
-      orientation: 'landscape',
-      background_path: null,
-      objects: []
-    }
-  ]
-};
+const INITIAL_PAGES = normalizePages();
+
+function buildFrame(role, overrides = {}) {
+  return {
+    id: createId('obj'),
+    type: 'frame',
+    x: 100,
+    y: 100,
+    width: 220,
+    height: 220,
+    role,
+    shape: 'rect',
+    locked: false,
+    deleted: false,
+    rotation: 0,
+    opacity: 1,
+    ...overrides,
+  };
+}
+
+function buildText(overrides = {}) {
+  return {
+    id: createId('obj'),
+    type: 'text',
+    x: 110,
+    y: 110,
+    width: 320,
+    height: 56,
+    content: 'Sample Text',
+    source_type: 'static',
+    source_variable: '',
+    font_size: 28,
+    fill: '#1f2937',
+    align: 'left',
+    locked: false,
+    deleted: false,
+    rotation: 0,
+    opacity: 1,
+    ...overrides,
+  };
+}
 
 export default function TemplateEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  
-  // State Management
+  const containerRef = useRef(null);
+
   const [templateInfo, setTemplateInfo] = useState({ name: 'Untitled Template' });
   const [activePageIndex, setActivePageIndex] = useState(0);
   const [selectedIds, setSelectedIds] = useState([]);
   const [saveLoading, setSaveLoading] = useState(false);
   const [canvasScale, setCanvasScale] = useState(1);
   const [clipboard, setClipboard] = useState([]);
-  const containerRef = useRef(null);
+  const [guides, setGuides] = useState([]);
+  const [loadError, setLoadError] = useState('');
 
-  // History Stack
-  const [pages, setPages, undo, redo, canUndo, canRedo] = useHistory(INITIAL_TEMPLATE.pages);
+  const [pages, setPages, undo, redo, canUndo, canRedo] = useHistory(INITIAL_PAGES);
+  const activePage = pages[activePageIndex] || pages[0];
+  const selectedObjects = activePage?.objects?.filter((obj) => selectedIds.includes(obj.id)) || [];
+  const templateStats = useMemo(() => getTemplateStats({ pages }), [pages]);
+  const isDirty = useMemo(() => {
+    if (id === 'new') return true;
+    return canUndo;
+  }, [id, canUndo]);
 
-  const activePage = pages[activePageIndex];
-
-  // Load Template
   useEffect(() => {
     if (id !== 'new') {
       loadTemplate();
+    } else {
+      setTemplateInfo({ name: 'Untitled Template' });
+      setPages(INITIAL_PAGES, true);
+      setActivePageIndex(0);
     }
   }, [id]);
 
-  async function loadTemplate() {
-    try {
-      const res = await getTemplate(id);
-      setTemplateInfo({ name: res.data.name });
-      const layout = res.data.layout_json;
-      if (layout && layout.pages) {
-         setPages(layout.pages, true); // Overwrite initial state
-      }
-    } catch (err) {
-      console.error('Failed to load template:', err);
-    }
-  }
-
-  // Responsive Scaling
   useEffect(() => {
     const updateScale = () => {
-      if (containerRef.current) {
-         const width = containerRef.current.offsetWidth - 100;
-         setCanvasScale(Math.min(1.2, width / 1000));
-      }
+      if (!containerRef.current) return;
+      const width = containerRef.current.offsetWidth - 140;
+      const height = containerRef.current.offsetHeight - 120;
+      const scaleByWidth = width / PAGE_WIDTH;
+      const scaleByHeight = height / getPageHeight(activePage?.orientation);
+      setCanvasScale(Math.max(0.3, Math.min(1.2, scaleByWidth, scaleByHeight)));
     };
+
     updateScale();
     window.addEventListener('resize', updateScale);
     return () => window.removeEventListener('resize', updateScale);
-  }, []);
+  }, [activePage?.orientation]);
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // 1. Guard for typing in inputs
-      const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
-      
+      const isInput =
+        e.target.tagName === 'INPUT' ||
+        e.target.tagName === 'TEXTAREA' ||
+        e.target.tagName === 'SELECT' ||
+        e.target.isContentEditable;
+      if (isInput) return;
+
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z') { if (!isInput) { e.preventDefault(); undo(); } }
-        if (e.key === 'y') { if (!isInput) { e.preventDefault(); redo(); } }
-        if (e.key === 'c') { if (!isInput) { e.preventDefault(); copySelected(); } }
-        if (e.key === 'v') { if (!isInput) { e.preventDefault(); pasteObjects(); } }
-        if (e.key === 'd') { if (!isInput) { e.preventDefault(); duplicateSelected(); } }
-      }
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-         if (!isInput) {
-           e.preventDefault();
-           deleteSelected();
-         }
+        switch (e.key.toLowerCase()) {
+          case 'z':
+            e.preventDefault();
+            if (e.shiftKey) {
+              redo();
+            } else {
+              undo();
+            }
+            break;
+          case 'y':
+            e.preventDefault();
+            redo();
+            break;
+          case 's':
+            e.preventDefault();
+            handleSave();
+            break;
+          case 'c':
+            e.preventDefault();
+            copySelected();
+            break;
+          case 'x':
+            e.preventDefault();
+            copySelected();
+            deleteSelected();
+            break;
+          case 'v':
+            e.preventDefault();
+            pasteObjects();
+            break;
+          case 'd':
+            e.preventDefault();
+            duplicateSelected();
+            break;
+          case 't':
+            e.preventDefault();
+            addObject('text');
+            break;
+          case 'r':
+            e.preventDefault();
+            addObject('frame', { role: 'individual' });
+            break;
+          default:
+            break;
+        }
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
+        e.preventDefault();
+        deleteSelected();
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, selectedIds, pages]);
+  }, [undo, redo, selectedIds, activePage, clipboard, canUndo]);
 
-  // --- SNAPPING LOGIC ---
-  const [guides, setGuides] = useState([]);
-  const GUIDELINE_OFFSET = 15; // Increased for better "magnetic" feel
+  async function loadTemplate() {
+    try {
+      setLoadError('');
+      const res = await getTemplate(id);
+      setTemplateInfo({ name: res.data.name || 'Untitled Template' });
+      setPages(normalizePages(res.data.layout_json?.pages), true);
+      setActivePageIndex(0);
+      setSelectedIds([]);
+    } catch (err) {
+      console.error('Failed to load template:', err);
+      setLoadError('Could not load template data.');
+    }
+  }
+
+  const GUIDELINE_OFFSET = 15;
 
   const handleDragMove = (e, objId) => {
-    const stage = e.target.getStage();
-    const layer = e.target.getLayer();
+    if (!activePage) return;
     const node = e.target;
-    
-    // 1. Get possible stop points
-    const vertical = [0, 500, 1000]; // L, C, R
-    const horizontal = [0, activePage.orientation === 'landscape' ? 353.5 : 707, activePage.orientation === 'landscape' ? 707 : 1414];
-    
-    activePage.objects.forEach(obj => {
+    const vertical = [0, PAGE_WIDTH / 2, PAGE_WIDTH];
+    const pageHeight = getPageHeight(activePage.orientation);
+    const horizontal = [0, pageHeight / 2, pageHeight];
+
+    activePage.objects.forEach((obj) => {
       if (obj.id === objId || obj.deleted) return;
       vertical.push(obj.x, obj.x + obj.width / 2, obj.x + obj.width);
       horizontal.push(obj.y, obj.y + obj.height / 2, obj.y + obj.height);
     });
 
-    // 2. Get node bounds
-    const box = node.getClientRect();
-    const absPos = node.getAbsolutePosition();
+    const resultGuides = [];
     const nodeBounds = {
       vertical: [
-        { guide: Math.round(node.x()), offset: Math.round(absPos.x - node.x()), snap: 'start' },
-        { guide: Math.round(node.x() + node.width() / 2), offset: Math.round(absPos.x - node.x()), snap: 'center' },
-        { guide: Math.round(node.x() + node.width()), offset: Math.round(absPos.x - node.x()), snap: 'end' },
+        { guide: Math.round(node.x()), snap: 'start' },
+        { guide: Math.round(node.x() + node.width() / 2), snap: 'center' },
+        { guide: Math.round(node.x() + node.width()), snap: 'end' },
       ],
       horizontal: [
-        { guide: Math.round(node.y()), offset: Math.round(absPos.y - node.y()), snap: 'start' },
-        { guide: Math.round(node.y() + node.height() / 2), offset: Math.round(absPos.y - node.y()), snap: 'center' },
-        { guide: Math.round(node.y() + node.height()), offset: Math.round(absPos.y - node.y()), snap: 'end' },
-      ]
+        { guide: Math.round(node.y()), snap: 'start' },
+        { guide: Math.round(node.y() + node.height() / 2), snap: 'center' },
+        { guide: Math.round(node.y() + node.height()), snap: 'end' },
+      ],
     };
 
-    // 3. Find matches
-    const resultGuides = [];
-    nodeBounds.vertical.forEach(bound => {
-      vertical.forEach(line => {
+    nodeBounds.vertical.forEach((bound) => {
+      vertical.forEach((line) => {
         const diff = Math.abs(line - bound.guide);
         if (diff < GUIDELINE_OFFSET) {
-           resultGuides.push({ pos: line, diff, orientation: 'V', snap: bound.snap });
-        }
-      });
-    });
-    nodeBounds.horizontal.forEach(bound => {
-      horizontal.forEach(line => {
-        const diff = Math.abs(line - bound.guide);
-        if (diff < GUIDELINE_OFFSET) {
-           resultGuides.push({ pos: line, diff, orientation: 'H', snap: bound.snap });
+          resultGuides.push({ pos: line, diff, orientation: 'V', snap: bound.snap });
         }
       });
     });
 
+    nodeBounds.horizontal.forEach((bound) => {
+      horizontal.forEach((line) => {
+        const diff = Math.abs(line - bound.guide);
+        if (diff < GUIDELINE_OFFSET) {
+          resultGuides.push({ pos: line, diff, orientation: 'H', snap: bound.snap });
+        }
+      });
+    });
+
+    const minV = resultGuides.filter((guide) => guide.orientation === 'V').sort((a, b) => a.diff - b.diff)[0];
+    const minH = resultGuides.filter((guide) => guide.orientation === 'H').sort((a, b) => a.diff - b.diff)[0];
     const finalGuides = [];
-    const minV = resultGuides.filter(g => g.orientation === 'V').sort((a,b) => a.diff - b.diff)[0];
-    const minH = resultGuides.filter(g => g.orientation === 'H').sort((a,b) => a.diff - b.diff)[0];
-    
+
     if (minV) {
       finalGuides.push(minV);
       if (minV.snap === 'start') node.x(minV.pos);
-      else if (minV.snap === 'center') node.x(minV.pos - node.width() / 2);
-      else if (minV.snap === 'end') node.x(minV.pos - node.width());
+      if (minV.snap === 'center') node.x(minV.pos - node.width() / 2);
+      if (minV.snap === 'end') node.x(minV.pos - node.width());
     }
+
     if (minH) {
       finalGuides.push(minH);
       if (minH.snap === 'start') node.y(minH.pos);
-      else if (minH.snap === 'center') node.y(minH.pos - node.height() / 2);
-      else if (minH.snap === 'end') node.y(minH.pos - node.height());
+      if (minH.snap === 'center') node.y(minH.pos - node.height() / 2);
+      if (minH.snap === 'end') node.y(minH.pos - node.height());
     }
 
     setGuides(finalGuides);
   };
 
-  // Object Actions
-  const addPage = () => {
-    const newPage = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: `Page ${pages.length + 1}`,
-      orientation: activePage ? activePage.orientation : 'landscape',
-      objects: []
-    };
-    const nextPages = [...pages, newPage];
+  const updateActivePage = (updates) => {
+    const nextPages = [...pages];
+    nextPages[activePageIndex] = { ...nextPages[activePageIndex], ...updates };
     setPages(nextPages);
-    // Use timeout to ensure state update has propagated or handle in useEffect
+  };
+
+  const addPage = () => {
+    const nextPage = {
+      id: createId('page'),
+      name: `Page ${pages.length + 1}`,
+      orientation: activePage?.orientation || 'landscape',
+      background_path: null,
+      objects: [],
+    };
+    const nextPages = [...pages, nextPage];
+    setPages(nextPages);
+    setSelectedIds([]);
     setTimeout(() => setActivePageIndex(nextPages.length - 1), 0);
   };
 
   const deletePage = (index) => {
     if (pages.length <= 1) return;
-    const newPages = pages.filter((_, i) => i !== index);
-    setPages(newPages);
-    setActivePageIndex(Math.max(0, index - 1));
+    const nextPages = pages.filter((_, pageIndex) => pageIndex !== index);
+    setPages(nextPages);
+    setSelectedIds([]);
+    setActivePageIndex(Math.max(0, Math.min(index - 1, nextPages.length - 1)));
   };
 
-  const updateActivePage = (updates) => {
-    const newPages = [...pages];
-    newPages[activePageIndex] = { ...newPages[activePageIndex], ...updates };
-    setPages(newPages);
-  };
-
-  // Object Actions
-  const addObject = (type, specifics = {}) => {
-    const newObj = {
-      id: Math.random().toString(36).substr(2, 9),
-      type,
-      x: 100,
-      y: 100,
-      width: specifics.width || (type === 'frame' ? 200 : 300),
-      height: specifics.height || (type === 'frame' ? 200 : 50),
-      role: 'individual',
-      shape: specifics.shape || 'rect',
-      locked: false,
-      deleted: false,
-      ...specifics
+  const duplicatePage = (index) => {
+    const page = pages[index];
+    const duplicate = {
+      ...page,
+      id: createId('page'),
+      name: `${page.name || `Page ${index + 1}`} Copy`,
+      objects: page.objects.map((object) => ({
+        ...object,
+        id: createId('obj'),
+      })),
     };
-    const newObjects = [...activePage.objects, newObj];
-    updateActivePage({ objects: newObjects });
-    setSelectedIds([newObj.id]);
+    const nextPages = [...pages.slice(0, index + 1), duplicate, ...pages.slice(index + 1)];
+    setPages(nextPages);
+    setActivePageIndex(index + 1);
+    setSelectedIds([]);
   };
 
-  const updateObject = (id, updates) => {
-    const newObjects = activePage.objects.map(obj => {
-       if (obj.id === id) {
-          if (updates.deleted) return { ...obj, deleted: true };
-          return { ...obj, ...updates };
-       }
-       return obj;
-    }).filter(obj => !obj.deleted || obj.id !== id); // Actually filter out if deleted is set
+  const addObject = (type, specifics = {}) => {
+    if (!activePage) return;
+    const nextObject = type === 'text' ? buildText(specifics) : buildFrame(specifics.role || 'individual', specifics);
+    updateActivePage({ objects: [...activePage.objects, nextObject] });
+    setSelectedIds([nextObject.id]);
+  };
 
-    const filtered = activePage.objects.map(obj => obj.id === id ? { ...obj, ...updates } : obj).filter(obj => !obj.deleted);
-    updateActivePage({ objects: filtered });
+  const addPreset = (preset) => {
+    if (!activePage) return;
+    const objects = [...activePage.objects];
+
+    if (preset === 'portrait-card') {
+      objects.push(buildFrame('individual', { x: 80, y: 90, width: 260, height: 320 }));
+      objects.push(buildText({ x: 80, y: 430, width: 320, height: 48, content: 'Student Name', source_type: 'variable', source_variable: 'student.name' }));
+      objects.push(buildText({ x: 80, y: 480, width: 240, height: 40, content: 'Class', source_type: 'variable', source_variable: 'student.class', font_size: 20, fill: '#64748b' }));
+    }
+
+    if (preset === 'group-hero') {
+      objects.push(buildFrame('group', { x: 70, y: 80, width: 860, height: 470 }));
+      objects.push(buildText({ x: 70, y: 575, width: 500, height: 54, content: 'Project Name', source_type: 'variable', source_variable: 'project.name', font_size: 30 }));
+    }
+
+    if (preset === 'class-grid') {
+      const frameWidth = 180;
+      const frameHeight = 180;
+      for (let row = 0; row < 2; row += 1) {
+        for (let col = 0; col < 4; col += 1) {
+          objects.push(
+            buildFrame('individual', {
+              x: 70 + col * 220,
+              y: 80 + row * 250,
+              width: frameWidth,
+              height: frameHeight,
+            })
+          );
+        }
+      }
+      objects.push(buildText({ x: 70, y: 595, width: 300, height: 44, content: 'Class 11-B', source_type: 'variable', source_variable: 'student.class', font_size: 26 }));
+    }
+
+    updateActivePage({ objects });
+  };
+
+  const updateObject = (objectId, updates) => {
+    const nextObjects = activePage.objects
+      .map((object) => (object.id === objectId ? { ...object, ...updates } : object))
+      .filter((object) => !object.deleted);
+
+    updateActivePage({ objects: nextObjects });
   };
 
   const deleteSelected = () => {
-     if (selectedIds.length === 0) return;
-     const newObjects = activePage.objects.map(obj => 
-        selectedIds.includes(obj.id) ? { ...obj, deleted: true } : obj
-     ).filter(obj => !obj.deleted);
-     updateActivePage({ objects: newObjects });
-     setSelectedIds([]);
+    if (selectedIds.length === 0) return;
+    updateActivePage({
+      objects: activePage.objects.filter((object) => !selectedIds.includes(object.id)),
+    });
+    setSelectedIds([]);
   };
 
   const reorderSelected = (direction) => {
     if (selectedIds.length !== 1) return;
-    const objId = selectedIds[0];
-    const objIndex = activePage.objects.findIndex(o => o.id === objId);
-    if (objIndex < 0) return;
-    
-    const newObjects = [...activePage.objects];
-    const [targetObj] = newObjects.splice(objIndex, 1);
-    
-    if (direction === 'up' && objIndex < newObjects.length) {
-      newObjects.splice(objIndex + 1, 0, targetObj);
-    } else if (direction === 'down' && objIndex > 0) {
-      newObjects.splice(objIndex - 1, 0, targetObj);
-    } else if (direction === 'top') {
-      newObjects.push(targetObj);
-    } else if (direction === 'bottom') {
-      newObjects.unshift(targetObj);
-    } else {
-      newObjects.splice(objIndex, 0, targetObj);
-    }
-    
-    updateActivePage({ objects: newObjects });
+
+    const objectId = selectedIds[0];
+    const currentIndex = activePage.objects.findIndex((object) => object.id === objectId);
+    if (currentIndex < 0) return;
+
+    const nextObjects = [...activePage.objects];
+    const [selectedObject] = nextObjects.splice(currentIndex, 1);
+
+    if (direction === 'top') nextObjects.push(selectedObject);
+    else if (direction === 'bottom') nextObjects.unshift(selectedObject);
+    else if (direction === 'up') nextObjects.splice(Math.min(currentIndex + 1, nextObjects.length), 0, selectedObject);
+    else if (direction === 'down') nextObjects.splice(Math.max(currentIndex - 1, 0), 0, selectedObject);
+
+    updateActivePage({ objects: nextObjects });
   };
 
   const duplicateSelected = () => {
-     if (selectedIds.length === 0) return;
-     const newObjs = activePage.objects.filter(o => selectedIds.includes(o.id)).map(o => ({
-        ...o,
-        id: Math.random().toString(36).substr(2, 9),
-        x: o.x + 20,
-        y: o.y + 20
-     }));
-     updateActivePage({ objects: [...activePage.objects, ...newObjs] });
-     setSelectedIds(newObjs.map(o => o.id));
+    if (selectedIds.length === 0) return;
+    const duplicates = activePage.objects
+      .filter((object) => selectedIds.includes(object.id))
+      .map((object) => ({
+        ...object,
+        id: createId('obj'),
+        x: object.x + 20,
+        y: object.y + 20,
+      }));
+
+    updateActivePage({ objects: [...activePage.objects, ...duplicates] });
+    setSelectedIds(duplicates.map((object) => object.id));
   };
 
   const copySelected = () => {
-     if (selectedIds.length === 0) return;
-     const selected = activePage.objects.filter(o => selectedIds.includes(o.id));
-     setClipboard(selected.map(o => ({ ...o })));
+    if (selectedIds.length === 0) return;
+    setClipboard(activePage.objects.filter((object) => selectedIds.includes(object.id)).map((object) => ({ ...object })));
   };
 
   const pasteObjects = () => {
-     if (clipboard.length === 0) return;
-     const newObjs = clipboard.map(o => ({
-        ...o,
-        id: Math.random().toString(36).substr(2, 9),
-        x: o.x + 20,
-        y: o.y + 20
-     }));
-     updateActivePage({ objects: [...activePage.objects, ...newObjs] });
-     setSelectedIds(newObjs.map(o => o.id));
-     // Optional: update clipboard offset so repeated pastes offset further
-     setClipboard(newObjs);
+    if (clipboard.length === 0) return;
+    const pasted = clipboard.map((object) => ({
+      ...object,
+      id: createId('obj'),
+      x: object.x + 20,
+      y: object.y + 20,
+    }));
+
+    updateActivePage({ objects: [...activePage.objects, ...pasted] });
+    setSelectedIds(pasted.map((object) => object.id));
+    setClipboard(pasted.map((object) => ({ ...object })));
   };
 
-  // Save Template
   const handleSave = async () => {
+    const cleanedName = templateInfo.name.trim();
+    if (!cleanedName) {
+      alert('Please give this template a name before saving.');
+      return;
+    }
+
     setSaveLoading(true);
     const payload = {
-      name: templateInfo.name,
+      name: cleanedName,
       page_size: 'A4',
-      layout_json: { pages }
+      layout_json: {
+        pages: pages.map((page) => ({
+          ...page,
+          objects: page.objects.filter((object) => !object.deleted),
+        })),
+      },
     };
 
     try {
@@ -313,103 +436,194 @@ export default function TemplateEditor() {
         navigate(`/templates/${res.data.id}`);
       } else {
         await updateTemplate(id, payload);
+        setPages(payload.layout_json.pages, true);
       }
-      alert('Template saved successfully!');
+      alert('Template saved successfully.');
     } catch (err) {
       console.error(err);
-      alert('Error saving template');
+      alert('Error saving template.');
     } finally {
       setSaveLoading(false);
     }
   };
 
   const handleBackgroundUpload = async (e) => {
-     if (!e.target.files?.[0] || id === 'new') return;
-     const formData = new FormData();
-     formData.append('file', e.target.files[0]);
-     try {
-       const res = await uploadTemplateBackground(id, formData);
-       updateActivePage({ background_path: res.background_path });
-     } catch (err) {
-       console.error(err);
-     }
+    if (!e.target.files?.[0] || id === 'new') return;
+    const formData = new FormData();
+    formData.append('file', e.target.files[0]);
+
+    try {
+      const res = await uploadTemplateBackground(id, formData);
+      updateActivePage({ background_path: res.data.background_path });
+    } catch (err) {
+      console.error(err);
+      alert('Background upload failed.');
+    } finally {
+      e.target.value = '';
+    }
   };
 
-  const selectedObjects = activePage.objects.filter(obj => selectedIds.includes(obj.id));
+  if (!activePage) {
+    return <div className="empty-state">Loading template editor...</div>;
+  }
 
   return (
-    <div className="editor-root" style={{ height: 'calc(100vh - 40px)', display: 'flex', flexDirection: 'column' }}>
-      {/* Top Bar / Toolbar */}
-      <div className="editor-toolbar" style={{ height: 56, borderBottom: '1px solid var(--border)', background: 'var(--bg-card)', display: 'flex', alignItems: 'center', padding: '0 24px', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-           <button onClick={() => navigate('/templates')} className="btn-icon" title="Go back">←</button>
-           <input 
-             className="editor-title-input"
-             value={templateInfo.name}
-             onChange={e => setTemplateInfo({ ...templateInfo, name: e.target.value })}
-             style={{ background: 'transparent', border: 'none', fontSize: 16, fontWeight: 700, outline: 'none' }}
-           />
+    <div
+      className="template-editor-shell"
+      style={{
+        height: 'calc(100vh - 64px)',
+        display: 'flex',
+        flexDirection: 'column',
+        margin: '-32px -40px',
+        background: 'linear-gradient(180deg, #0c1019 0%, #0a0a0f 100%)',
+      }}
+    >
+      <div
+        className="editor-toolbar"
+        style={{
+          minHeight: 84,
+          borderBottom: '1px solid var(--border)',
+          background: 'rgba(10, 10, 15, 0.92)',
+          backdropFilter: 'blur(14px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 20,
+          padding: '16px 24px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => navigate('/templates')}>
+            Back
+          </button>
+          <div style={{ minWidth: 260 }}>
+            <input
+              className="editor-title-input"
+              value={templateInfo.name}
+              onChange={(e) => setTemplateInfo({ name: e.target.value })}
+              placeholder="Template Name"
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 'none',
+                fontSize: 22,
+                fontWeight: 700,
+                outline: 'none',
+                color: 'var(--text-primary)',
+                padding: 0,
+              }}
+            />
+            <div style={{ display: 'flex', gap: 14, marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+              <span>{templateStats.pageCount} pages</span>
+              <span>{templateStats.frameCount} frames</span>
+              <span>{templateStats.textCount} text blocks</span>
+              <span>{isDirty ? 'Unsaved changes' : 'Saved state'}</span>
+            </div>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-           <div style={{ display: 'flex', borderRight: '1px solid var(--border)', paddingRight: 12, marginRight: 12, gap: 8 }}>
-              <button className="btn btn-secondary" onClick={() => addObject('frame', { shape: 'rect' })}>+ Frame</button>
-              <button className="btn btn-secondary" onClick={() => addObject('text')}>+ Text</button>
-           </div>
-           
-           <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-icon" onClick={undo} disabled={!canUndo} title="Undo">↩️</button>
-              <button className="btn btn-icon" onClick={redo} disabled={!canRedo} title="Redo">↪️</button>
-           </div>
-
-           <button className="btn btn-primary" onClick={handleSave} disabled={saveLoading}>
-              {saveLoading ? 'Saving...' : 'Save Template'}
-           </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => addObject('frame', { role: 'individual' })}>
+            Add Frame
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => addObject('text')}>
+            Add Text
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={duplicateSelected} disabled={selectedIds.length === 0}>
+            Duplicate
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={undo} disabled={!canUndo}>
+            Undo
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={redo} disabled={!canRedo}>
+            Redo
+          </button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saveLoading}>
+            {saveLoading ? 'Saving...' : 'Save Template'}
+          </button>
         </div>
       </div>
 
+      <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="btn btn-secondary btn-sm" onClick={() => addPreset('portrait-card')}>
+          Insert Portrait Card
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => addPreset('group-hero')}>
+          Insert Group Hero
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => addPreset('class-grid')}>
+          Insert Class Grid
+        </button>
+        <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+          Shortcuts: Ctrl/Cmd+S save, Ctrl/Cmd+D duplicate, Delete remove
+        </span>
+      </div>
+
+      {loadError && (
+        <div style={{ padding: '12px 24px', color: '#fecaca', background: 'rgba(127, 29, 29, 0.35)', borderBottom: '1px solid rgba(248, 113, 113, 0.25)' }}>
+          {loadError}
+        </div>
+      )}
+
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Navigator (Left) */}
-        <Navigator 
-          pages={pages} 
-          activePageIndex={activePageIndex} 
-          onPageSelect={setActivePageIndex}
+        <Navigator
+          pages={pages}
+          activePageIndex={activePageIndex}
+          onPageSelect={(index) => {
+            setActivePageIndex(index);
+            setSelectedIds([]);
+          }}
           onAddPage={addPage}
           onDeletePage={deletePage}
-          onDuplicatePage={(idx) => {
-             const copy = { ...pages[idx], id: Math.random().toString(36).substr(2, 9), name: `${pages[idx].name} (Copy)` };
-             setPages([...pages, copy]);
-          }}
+          onDuplicatePage={duplicatePage}
         />
 
-        {/* Main Canvas (Center) */}
         <div ref={containerRef} style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
-           <StageArea 
-             activePage={activePage}
-             selectedIds={selectedIds}
-             onSelect={setSelectedIds}
-             onObjectChange={updateObject}
-             onDragMove={handleDragMove}
-             canvasScale={canvasScale}
-             guides={guides} 
-           />
-           
-           {/* Canvas Controls */}
-           <div style={{ position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: 'var(--bg-card)', padding: '6px 16px', borderRadius: 30, boxShadow: 'var(--shadow-md)', display: 'flex', alignItems: 'center', gap: 16, border: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 12, fontWeight: 500 }}>{Math.round(canvasScale * 100)}%</span>
-              <button className="btn-icon" onClick={() => setCanvasScale(prev => Math.max(0.2, prev - 0.1))}>-</button>
-              <button className="btn-icon" onClick={() => setCanvasScale(prev => Math.min(2.0, prev + 0.1))}>+</button>
-           </div>
+          <StageArea
+            activePage={activePage}
+            selectedIds={selectedIds}
+            onSelect={setSelectedIds}
+            onObjectChange={updateObject}
+            onDragMove={handleDragMove}
+            canvasScale={canvasScale}
+            guides={guides}
+          />
+
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 24,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(10, 10, 15, 0.88)',
+              padding: '8px 16px',
+              borderRadius: 999,
+              boxShadow: 'var(--shadow-md)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              border: '1px solid var(--border)',
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{Math.round(canvasScale * 100)}%</span>
+            <button className="btn btn-secondary btn-sm" onClick={() => setCanvasScale((prev) => Math.max(0.2, prev - 0.1))}>
+              -
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={() => setCanvasScale((prev) => Math.min(2, prev + 0.1))}>
+              +
+            </button>
+          </div>
         </div>
 
-        {/* Inspector (Right) */}
-        <Inspector 
+        <Inspector
           activePage={activePage}
           selectedObjects={selectedObjects}
           onPageChange={updateActivePage}
           onObjectChange={updateObject}
           onBackgroundUpload={handleBackgroundUpload}
           onReorder={reorderSelected}
+          onDuplicateSelected={duplicateSelected}
+          onDeleteSelected={deleteSelected}
         />
       </div>
     </div>

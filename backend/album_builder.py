@@ -153,10 +153,14 @@ def generate_album(project_id: int, template_id: int = None, target_cluster_id: 
                     # 2. Handle Text (Variable Resolution)
                     elif obj["type"] == "text":
                         content = obj.get("content", "")
-                        if obj.get("source_type") == "variable":
-                            var = obj.get("source_variable")
-                            if var == "student.name":
-                                content = cluster_name
+                        var_type = obj.get("source_type")
+                        var_name = obj.get("source_variable")
+                        
+                        # Replace generic double curly brace tags
+                        if "{{name}}" in content.lower():
+                            content = content.lower().replace("{{name}}", cluster_name)
+                        elif var_type == "variable" and var_name == "student.name":
+                            content = cluster_name
                         
                         page_items.append({
                             **norm_obj,

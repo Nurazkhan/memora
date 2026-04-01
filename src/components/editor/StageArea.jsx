@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { Stage, Layer, Rect, Circle, Transformer, Text as KonvaText, Image as KonvaImage, Line, Group } from 'react-konva';
 import useImage from 'use-image';
+import { PAGE_WIDTH, SAMPLE_TEMPLATE_DATA, getPageHeight, resolveTemplateText } from './templateUtils';
 
 const API_BASE = 'http://127.0.0.1:8599';
 
@@ -34,13 +35,13 @@ function EditorObject({ object, isSelected, onSelect, onChange, onDragMove, canv
       const newProps = {
         x: node.x(),
         y: node.y(),
-        width: node.width() * scaleX,
-        height: node.height() * scaleY,
+        width: Math.max(24, node.width() * scaleX),
+        height: Math.max(24, node.height() * scaleY),
         rotation: node.rotation()
       };
       
       if (object.type === 'text') {
-        newProps.font_size = Math.round((object.font_size || 16) * scaleY);
+        newProps.font_size = Math.max(10, Math.round((object.font_size || 16) * scaleY));
       }
       
       onChange(object.id, newProps);
@@ -51,47 +52,80 @@ function EditorObject({ object, isSelected, onSelect, onChange, onDragMove, canv
     const color = object.role === 'individual' ? '#3b82f6' : (object.role === 'group' ? '#10b981' : '#f59e0b');
     return (
       <React.Fragment>
-        {object.shape === 'circle' ? (
-          <Circle 
-            {...commonProps} 
-            x={object.x + object.width / 2} 
-            y={object.y + object.height / 2} 
-            radius={object.width / 2}
-            fill={color + '40'}
-            stroke={color}
-            strokeWidth={1}
-          />
-        ) : (
-          <Rect 
-            {...commonProps} 
-            x={object.x} 
-            y={object.y} 
-            width={object.width} 
-            height={object.height} 
-            fill={color + '40'}
-            stroke={color}
-            strokeWidth={1}
-          />
-        )}
+        <Group
+          {...commonProps}
+          x={object.x}
+          y={object.y}
+          width={object.width}
+          height={object.height}
+          rotation={object.rotation || 0}
+          opacity={object.opacity ?? 1}
+        >
+          {object.shape === 'circle' ? (
+            <Circle
+              x={object.width / 2}
+              y={object.height / 2}
+              radius={Math.min(object.width, object.height) / 2}
+              fill={color + '40'}
+              stroke={color}
+              strokeWidth={1}
+            />
+          ) : (
+            <Rect
+              width={object.width}
+              height={object.height}
+              fill={color + '40'}
+              stroke={color}
+              strokeWidth={1}
+              cornerRadius={8}
+            />
+          )}
+        </Group>
         {isSelected && !object.locked && <Transformer ref={trRef} rotateEnabled={true} />}
       </React.Fragment>
     );
   }
 
   if (object.type === 'text') {
-    const displayText = object.source_type === 'variable' ? `{{${object.source_variable}}}` : (object.content || 'Sample Text');
+    const isVariable = object.source_type === 'variable';
+    const displayText = resolveTemplateText(object, SAMPLE_TEMPLATE_DATA);
+    const color = object.fill || '#1f2937';
+    
     return (
       <React.Fragment>
-        <KonvaText 
-          {...commonProps} 
-          x={object.x} 
-          y={object.y} 
-          text={displayText} 
-          fontSize={object.font_size || 16}
-          align={object.align || 'left'}
+        <Group
+          {...commonProps}
+          x={object.x}
+          y={object.y}
           width={object.width}
-          fill="#1f2937"
-        />
+          height={object.height}
+          rotation={object.rotation || 0}
+          opacity={object.opacity ?? 1}
+        >
+          {isVariable && (
+            <Rect 
+              width={object.width}
+              height={object.height}
+              fill={color + '10'}
+              stroke={color}
+              strokeWidth={1}
+              dash={[2, 2]}
+              cornerRadius={6}
+            />
+          )}
+          <KonvaText 
+            x={0} 
+            y={Math.max(0, (object.height - (object.font_size || 16)) / 2)}
+            text={displayText} 
+            fontSize={object.font_size || 16}
+            align={object.align || 'left'}
+            width={object.width}
+            height={object.height}
+            fill={color}
+            fontStyle={isVariable ? 'bold italic' : 'normal'}
+            verticalAlign="middle"
+          />
+        </Group>
         {isSelected && !object.locked && <Transformer ref={trRef} rotateEnabled={true} />}
       </React.Fragment>
     );
@@ -103,14 +137,15 @@ function EditorObject({ object, isSelected, onSelect, onChange, onDragMove, canv
 export default function StageArea({ activePage, selectedIds, onSelect, onObjectChange, onDragMove, canvasScale, guides }) {
   const [bgImage] = useImage(activePage.background_path ? `${API_BASE}/files/templates_assets/${activePage.background_path.split(/[\\/]/).pop()}` : null);
   const stageRef = useRef();
+  const pageHeight = getPageHeight(activePage.orientation);
 
   return (
     <div className="stage-container" style={{ flex: 1, background: '#f3f4f6', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
        <div style={{ position: 'relative', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
           <Stage 
             ref={stageRef}
-            width={1000 * canvasScale}
-            height={(activePage.orientation === 'landscape' ? 707 : 1414) * canvasScale}
+            width={PAGE_WIDTH * canvasScale}
+            height={pageHeight * canvasScale}
             scaleX={canvasScale}
             scaleY={canvasScale}
             onMouseDown={(e) => {
@@ -119,15 +154,15 @@ export default function StageArea({ activePage, selectedIds, onSelect, onObjectC
           >
             <Layer>
                <Rect 
-                 width={1000} 
-                 height={activePage.orientation === 'landscape' ? 707 : 1414} 
+                 width={PAGE_WIDTH} 
+                 height={pageHeight} 
                  fill="white" 
                />
                {bgImage && (
                  <KonvaImage 
                    image={bgImage} 
-                   width={1000} 
-                   height={activePage.orientation === 'landscape' ? 707 : 1414} 
+                   width={PAGE_WIDTH} 
+                   height={pageHeight} 
                  />
                )}
                {activePage.objects.filter(o => !o.deleted).map(obj => (

@@ -11,9 +11,19 @@ import {
 import Dropzone from '../components/Dropzone';
 import AlbumGenModal from '../components/modals/AlbumGenModal';
 import PhotoPickerModal from '../components/modals/PhotoPickerModal';
+import PhotoPreviewSidebar from '../components/editor/PhotoPreviewSidebar';
 import axios from 'axios';
+import HTMLFlipBook from 'react-pageflip';
 
 const API_BASE = 'http://127.0.0.1:8599';
+
+const BookPage = React.forwardRef((props, ref) => {
+  return (
+    <div className="page" ref={ref} style={{ ...props.style, backgroundColor: 'white', overflow: 'hidden', boxShadow: 'inset 0 0 20px rgba(0,0,0,0.02)' }}>
+      {props.children}
+    </div>
+  );
+});
 
 function FullImageOverlay({ image, onClose }) {
   if (!image) return null;
@@ -221,6 +231,8 @@ export default function ProjectView() {
   const [showGenModal, setShowGenModal] = useState(false);
   
   const [pickingPhotoFor, setPickingPhotoFor] = useState(null);
+  const [hoverPreviewImage, setHoverPreviewImage] = useState(null);
+  const [albumViewMode, setAlbumViewMode] = useState('grid');
   const [photosSearch, setPhotosSearch] = useState('');
   const [photosSort, setPhotosSort] = useState('date');
   const [clustersSearch, setClustersSearch] = useState('');
@@ -532,6 +544,153 @@ export default function ProjectView() {
     setShowNewRow(false);
     setNewStudentForm({ name: '', class_name: '', student_number: '' });
   }
+
+  const renderAlbumPageContent = (page, idx) => {
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '100%', padding: '40px', boxSizing: 'border-box', backgroundColor: '#ffffff', overflow: 'hidden' }}>
+        {page?.background && (
+          <img 
+            src={`${API_BASE}/files/templates_assets/${page.background.split(/[\\/]/).pop()}`}
+            alt="Page Background"
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }}
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+        )}
+        <div style={{ position: 'relative', zIndex: 2, height: '100%' }}>
+          <h4 style={{ color: '#12121a', fontSize: 24, fontWeight: 700, marginBottom: 24, textAlign: 'center', textTransform: 'uppercase', letterSpacing: 2 }}>
+            {page?.title || 'Untitled Page'}
+          </h4>
+                  
+        {page?.type === 'individual' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, height: 'calc(100% - 60px)' }}>
+            {(page?.items || []).map(item => (
+              <div key={item?.student_id || Math.random()} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <div style={{ 
+                  flex: 1, background: '#e0e0e8', overflow: 'hidden', position: 'relative', boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                }}>
+                  {item?.face_thumb && (
+                    <img 
+                      src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/faces/face_${item?.face_id}.jpg`}
+                      alt={item?.student_name || 'Student'}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      onClick={() => handleViewFaceImage({ image_id: item?.image_id })}
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                  )}
+                </div>
+                <div style={{ textAlign: 'center', marginTop: 12, padding: '8px 0', background: 'white', color: '#1a1a28', fontWeight: 600, fontSize: 13, borderBottom: '2px solid var(--accent)' }}>
+                  {item?.student_name || 'Unknown'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {page?.type === 'group' && (
+          <div style={{ height: 'calc(100% - 60px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {(page?.items || []).map((item, i) => (
+              <div key={i} style={{ width: '80%', height: '80%', background: '#e0e0e8', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', position: 'relative' }}>
+                {item?.image_original && (
+                  <img 
+                    src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${(item.image_original || '').split('/').pop().split('\\').pop()}`}
+                    alt="Group"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                    onClick={() => setViewingImage({
+                      url: `${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${(item.image_original || '').split('/').pop().split('\\').pop()}`,
+                      filename: "Group Photo"
+                    })}
+                    onError={(e) => { e.target.style.display = 'none'; }}
+                  />
+                )}
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', color: 'white' }}>
+                  <p style={{ fontSize: 14, fontWeight: 500 }}>Featuring: {item?.metadata || 'Unknown'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {page?.type === 'template_page' && (
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+             {(page?.items || []).map((item, itemIdx) => {
+               const baseImgFile = item?.target_photo?.disk_filename || item?.target_photo?.filename || '';
+               const isTarget = pickingPhotoFor && pickingPhotoFor.pIdx === idx && pickingPhotoFor.itemIdx === itemIdx;
+               const showPreview = isTarget && hoverPreviewImage;
+               const displayImgFile = showPreview ? (hoverPreviewImage.original_path || '').split(/[\\/]/).pop() : baseImgFile;
+
+               return (
+               <div 
+                 key={item?.id || Math.random()} 
+                 style={{
+                   position: 'absolute',
+                   left: `${(item?.x || 0) * 100}%`,
+                   top: `${(item?.y || 0) * 100}%`,
+                   width: `${(item?.width || 0) * 100}%`,
+                   height: `${(item?.height || 0) * 100}%`,
+                   zIndex: item?.type === 'text' ? 10 : 1
+                 }}
+               >
+                 {item?.type === 'frame' && displayImgFile && (
+                   <img 
+                     src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${displayImgFile}`}
+                     alt="Frame Content"
+                     title="Click to select a different photo for this slot"
+                     style={{ 
+                       width: '100%', height: '100%', objectFit: 'cover', 
+                       boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                       cursor: 'pointer',
+                       transition: 'all 0.2s',
+                       opacity: isTarget ? 0.8 : 1,
+                       border: showPreview ? '4px solid var(--accent)' : 'none',
+                       borderRadius: 4
+                     }}
+                     onMouseEnter={e => e.currentTarget.style.opacity = 0.8}
+                     onMouseLeave={e => e.currentTarget.style.opacity = 1}
+                     onClick={() => setPickingPhotoFor({ pIdx: idx, itemIdx })}
+                     onError={(e) => { e.target.style.display = 'none'; }}
+                   />
+                 )}
+                 {item?.type === 'frame' && !displayImgFile && (
+                   <div style={{
+                     width: '100%', height: '100%',
+                     background: 'linear-gradient(135deg, #e0e0e8 0%, #c8c8d8 100%)',
+                     display: 'flex', alignItems: 'center', justifyContent: 'center',
+                     color: '#8888aa', fontSize: 13, fontWeight: 500,
+                     cursor: 'pointer', borderRadius: 4
+                   }}
+                     onClick={() => setPickingPhotoFor({ pIdx: idx, itemIdx })}
+                   >
+                     Click to add photo
+                   </div>
+                 )}
+                 {item?.type === 'text' && (
+                   <div style={{
+                     width: '100%', height: '100%',
+                     fontSize: `${(item?.font_size || item?.fontSize || 16) / 4}px`,
+                     color: item?.fill || '#000',
+                     display: 'flex',
+                     alignItems: 'center',
+                     justifyContent: 'center',
+                     textAlign: 'center',
+                     fontWeight: 'bold',
+                     padding: 4
+                   }}>
+                     {item?.resolved_content || item?.content || ''}
+                   </div>
+                 )}
+               </div>
+               );
+             })}
+          </div>
+        )}
+        
+        <div style={{ position: 'absolute', bottom: 16, right: 24, fontSize: 12, color: '#a0a0b8' }}>
+          Page {idx + 1}
+        </div>
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -1206,6 +1365,26 @@ export default function ProjectView() {
               </p>
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
+              {albumPages.length > 0 && (
+                <div style={{ display: 'flex', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', padding: 4 }}>
+                  <button 
+                    style={{ 
+                      padding: '8px 16px', background: albumViewMode === 'grid' ? 'white' : 'transparent', 
+                      border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+                      boxShadow: albumViewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', color: albumViewMode === 'grid' ? 'var(--text-primary)' : 'var(--text-secondary)'
+                    }}
+                    onClick={() => setAlbumViewMode('grid')}
+                  >⬇ Grid View</button>
+                  <button 
+                    style={{ 
+                      padding: '8px 16px', background: albumViewMode === 'book' ? 'white' : 'transparent', 
+                      border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+                      boxShadow: albumViewMode === 'book' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none', color: albumViewMode === 'book' ? 'var(--text-primary)' : 'var(--text-secondary)'
+                    }}
+                    onClick={() => setAlbumViewMode('book')}
+                  >📖 Book View</button>
+                </div>
+              )}
               <button 
                 className="btn btn-secondary" 
                 onClick={() => window.open(`${API_BASE}/projects/${id}/album/export`, '_blank')}
@@ -1231,145 +1410,43 @@ export default function ProjectView() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 40, alignItems: 'center' }}>
-              {albumPages.map((page, idx) => (
-                <div key={idx} style={{ 
-                  width: '100%', maxWidth: '800px', 
-                  aspectRatio: page?.orientation === 'portrait' ? '0.707' : '1.414',
-                  background: 'white',
-                  padding: 40,
-                  boxShadow: 'var(--shadow-lg)',
-                  borderRadius: 'var(--radius-sm)',
-                  position: 'relative',
-                  overflow: 'hidden'
-                }}>
-                  <h4 style={{ color: '#12121a', fontSize: 24, fontWeight: 700, marginBottom: 24, textAlign: 'center', textTransform: 'uppercase', letterSpacing: 2 }}>{page?.title || 'Untitled Page'}</h4>
-                  
-                  {page?.type === 'individual' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, height: 'calc(100% - 60px)' }}>
-                      {(page?.items || []).map(item => (
-                        <div key={item?.student_id || Math.random()} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                          <div style={{ 
-                            flex: 1, 
-                            background: '#e0e0e8',
-                            overflow: 'hidden',
-                            position: 'relative',
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                          }}>
-                            {item?.face_thumb && (
-                              <img 
-                                src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/faces/face_${item?.face_id}.jpg`}
-                                alt={item?.student_name || 'Student'}
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                onClick={() => handleViewFaceImage({ image_id: item?.image_id })}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
-                            )}
-                          </div>
-                          <div style={{ textAlign: 'center', marginTop: 12, padding: '8px 0', background: 'white', color: '#1a1a28', fontWeight: 600, fontSize: 13, borderBottom: '2px solid var(--accent)' }}>
-                            {item?.student_name || 'Unknown'}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {page?.type === 'group' && (
-                    <div style={{ height: 'calc(100% - 60px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {(page?.items || []).map((item, i) => (
-                        <div key={i} style={{ width: '80%', height: '80%', background: '#e0e0e8', overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', position: 'relative' }}>
-                          {item?.image_original && (
-                            <img 
-                              src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${(item.image_original || '').split('/').pop().split('\\').pop()}`}
-                              alt="Group"
-                              style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
-                              onClick={() => setViewingImage({
-                                url: `${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${(item.image_original || '').split('/').pop().split('\\').pop()}`,
-                                filename: "Group Photo"
-                              })}
-                              onError={(e) => { e.target.style.display = 'none'; }}
-                            />
-                          )}
-                          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', color: 'white' }}>
-                            <p style={{ fontSize: 14, fontWeight: 500 }}>Featuring: {item?.metadata || 'Unknown'}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {page?.type === 'template_page' && (
-                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
-                       {(page?.items || []).map((item, itemIdx) => {
-                         const imgFile = item?.target_photo?.disk_filename || item?.target_photo?.filename || '';
-                         return (
-                         <div 
-                           key={item?.id || Math.random()} 
-                           style={{
-                             position: 'absolute',
-                             left: `${(item?.x || 0) * 100}%`,
-                             top: `${(item?.y || 0) * 100}%`,
-                             width: `${(item?.width || 0) * 100}%`,
-                             height: `${(item?.height || 0) * 100}%`,
-                             zIndex: item?.type === 'text' ? 10 : 1
-                           }}
-                         >
-                           {item?.type === 'frame' && imgFile && (
-                             <img 
-                               src={`${API_BASE}/files/${(project?.name || '').replace(/ /g, "_").toLowerCase()}/originals/${imgFile}`}
-                               alt="Frame Content"
-                               title="Click to select a different photo for this slot"
-                               style={{ 
-                                 width: '100%', height: '100%', objectFit: 'cover', 
-                                 boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                                 cursor: 'pointer',
-                                 transition: 'opacity 0.2s',
-                                 borderRadius: 4
-                               }}
-                               onMouseEnter={e => e.currentTarget.style.opacity = 0.8}
-                               onMouseLeave={e => e.currentTarget.style.opacity = 1}
-                               onClick={() => setPickingPhotoFor({ pIdx: idx, itemIdx })}
-                               onError={(e) => { e.target.style.display = 'none'; }}
-                             />
-                           )}
-                           {item?.type === 'frame' && !imgFile && (
-                             <div style={{
-                               width: '100%', height: '100%',
-                               background: 'linear-gradient(135deg, #e0e0e8 0%, #c8c8d8 100%)',
-                               display: 'flex', alignItems: 'center', justifyContent: 'center',
-                               color: '#8888aa', fontSize: 13, fontWeight: 500,
-                               cursor: 'pointer', borderRadius: 4
-                             }}
-                               onClick={() => setPickingPhotoFor({ pIdx: idx, itemIdx })}
-                             >
-                               Click to add photo
-                             </div>
-                           )}
-                           {item?.type === 'text' && (
-                             <div style={{
-                               width: '100%', height: '100%',
-                               fontSize: `${(item?.font_size || item?.fontSize || 16) / 4}px`,
-                               color: item?.fill || '#000',
-                               display: 'flex',
-                               alignItems: 'center',
-                               justifyContent: 'center',
-                               textAlign: 'center',
-                               fontWeight: 'bold',
-                               padding: 4
-                             }}>
-                               {item?.resolved_content || item?.content || ''}
-                             </div>
-                           )}
-                         </div>
-                         );
-                       })}
-                    </div>
-                  )}
-                  
-                  <div style={{ position: 'absolute', bottom: 16, right: 24, fontSize: 12, color: '#a0a0b8' }}>
-                    Page {idx + 1}
-                  </div>
+              {albumViewMode === 'book' ? (
+                <div style={{ width: '100%', maxWidth: 1000, margin: '20px auto', display: 'flex', justifyContent: 'center' }}>
+                  <HTMLFlipBook 
+                    width={500} 
+                    height={707} 
+                    size="stretch"
+                    minWidth={315}
+                    maxWidth={1000}
+                    minHeight={400}
+                    maxHeight={1414}
+                    showCover={true}
+                    maxShadowOpacity={0.5}
+                    className="custom-flipbook"
+                    style={{ boxShadow: 'var(--shadow-2xl)', borderRadius: 4, margin: '0 auto' }}
+                  >
+                    {albumPages.map((page, idx) => (
+                      <BookPage key={idx}>
+                         {renderAlbumPageContent(page, idx)}
+                      </BookPage>
+                    ))}
+                  </HTMLFlipBook>
                 </div>
-              ))}
+              ) : (
+                albumPages.map((page, idx) => (
+                  <div key={idx} style={{ 
+                    width: '100%', maxWidth: '800px', 
+                    aspectRatio: page?.orientation === 'portrait' ? '0.707' : '1.414',
+                    background: 'white',
+                    boxShadow: 'var(--shadow-lg)',
+                    borderRadius: 'var(--radius-sm)',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}>
+                    {renderAlbumPageContent(page, idx)}
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
@@ -1474,25 +1551,27 @@ export default function ProjectView() {
         />
       )}
 
-      {pickingPhotoFor && (
-        <PhotoPickerModal
-          project={project}
-          images={images}
-          onClose={() => setPickingPhotoFor(null)}
-          onSelect={(newImage) => {
-            const newPages = [...albumPages];
-            // Extract the actual filename on disk (UUID) from the original_path
-            const pathParts = (newImage.original_path || '').replace(/\\/g, '/').split('/');
-            const diskFilename = pathParts[pathParts.length - 1] || newImage.filename;
-            newPages[pickingPhotoFor.pIdx].items[pickingPhotoFor.itemIdx].target_photo = {
-              ...newImage,
-              disk_filename: diskFilename
-            };
-            setAlbumPages(newPages);
-            setPickingPhotoFor(null);
-          }}
-        />
-      )}
+      <PhotoPreviewSidebar
+        isOpen={!!pickingPhotoFor}
+        project={project}
+        images={images}
+        onClose={() => { setPickingPhotoFor(null); setHoverPreviewImage(null); }}
+        onHoverImage={(img) => setHoverPreviewImage(img)}
+        onLeaveImage={() => setHoverPreviewImage(null)}
+        onSelectImage={(newImage) => {
+          if (!pickingPhotoFor) return;
+          const newPages = [...albumPages];
+          const pathParts = (newImage.original_path || '').replace(/\\/g, '/').split('/');
+          const diskFilename = pathParts[pathParts.length - 1] || newImage.filename;
+          newPages[pickingPhotoFor.pIdx].items[pickingPhotoFor.itemIdx].target_photo = {
+            ...newImage,
+            disk_filename: diskFilename
+          };
+          setAlbumPages(newPages);
+          setPickingPhotoFor(null);
+          setHoverPreviewImage(null);
+        }}
+      />
     </div>
   );
 }

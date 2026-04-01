@@ -6,11 +6,8 @@ export default function useHistory(initialState) {
 
   const setState = useCallback((newState, overwrite = false) => {
     if (overwrite) {
-      setHistory(prev => {
-        const copy = [...prev];
-        copy[index] = newState;
-        return copy;
-      });
+      setHistory([newState]);
+      setIndex(0);
       return;
     }
 
