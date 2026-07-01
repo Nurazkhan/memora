@@ -91,11 +91,28 @@ def _background_image_path(background_path: Optional[str]) -> Optional[Path]:
     return candidate if candidate.exists() else None
 
 
-def _draw_image_cover(pdf: canvas.Canvas, image_path: Path, x: float, y: float, width: float, height: float):
+def _draw_image_cover(
+    pdf: canvas.Canvas,
+    image_path: Path,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    zoom: float = 1.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+):
     try:
         image = ImageReader(str(image_path))
         img_width, img_height = image.getSize()
         draw_x, draw_y, draw_width, draw_height = _crop_fit_dimensions(img_width, img_height, width, height)
+        zoom = max(1.0, float(zoom or 1.0))
+        draw_width *= zoom
+        draw_height *= zoom
+        overflow_x = max(0.0, draw_width - width)
+        overflow_y = max(0.0, draw_height - height)
+        draw_x = -overflow_x / 2 + float(offset_x or 0.0) * (overflow_x / 2)
+        draw_y = -overflow_y / 2 + float(offset_y or 0.0) * (overflow_y / 2)
         pdf.saveState()
         path = pdf.beginPath()
         path.rect(x, y, width, height)
@@ -161,8 +178,19 @@ def _draw_template_page(pdf: canvas.Canvas, project_directory: Path, page: Dict[
         if item.get("type") == "frame":
             x, y, width, height = _scale_rect(item, page_width, page_height)
             image_path = _disk_image_path(project_directory, item.get("target_photo") or {})
+            image_adjust = item.get("image_adjust") or {}
             if image_path:
-                _draw_image_cover(pdf, image_path, x, page_height - y - height, width, height)
+                _draw_image_cover(
+                    pdf,
+                    image_path,
+                    x,
+                    page_height - y - height,
+                    width,
+                    height,
+                    zoom=image_adjust.get("zoom", 1.0),
+                    offset_x=image_adjust.get("offset_x", 0.0),
+                    offset_y=image_adjust.get("offset_y", 0.0),
+                )
             else:
                 _draw_frame_placeholder(pdf, x, page_height - y - height, width, height)
         elif item.get("type") == "text":

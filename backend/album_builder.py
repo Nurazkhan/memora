@@ -72,7 +72,7 @@ def generate_album(project_id: int, template_id: int = None, target_cluster_id: 
             # Pre-fetch ALL photos that contain this cluster (for individual frames)
             individual_photos = conn.execute("""
                 SELECT f.id as face_id, f.thumbnail_path as face_thumb, f.image_id, 
-                       i.original_path, i.thumbnail_path as img_thumb, i.filename
+                       i.original_path, i.thumbnail_path as img_thumb, i.filename, i.width, i.height
                 FROM faces f
                 JOIN images i ON f.image_id = i.id
                 WHERE f.cluster_id = ?
@@ -82,7 +82,7 @@ def generate_album(project_id: int, template_id: int = None, target_cluster_id: 
 
             # Pre-fetch a pool of group photos that contain this cluster
             group_photos = conn.execute("""
-                SELECT i.id, i.original_path, i.thumbnail_path as img_thumb, i.filename
+                SELECT i.id, i.original_path, i.thumbnail_path as img_thumb, i.filename, i.width, i.height
                 FROM images i
                 JOIN faces f ON i.id = f.image_id
                 WHERE i.project_id = ? AND f.cluster_id = ?

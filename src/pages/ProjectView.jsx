@@ -14,6 +14,10 @@ import PhotoPreviewSidebar from '../components/editor/PhotoPreviewSidebar';
 import HTMLFlipBook from 'react-pageflip';
 
 const API_BASE = 'http://127.0.0.1:8599';
+const BOOK_PAGE_WIDTH = 500;
+const BOOK_PAGE_HEIGHT = 707;
+const BOOK_BASE_WIDTH = BOOK_PAGE_WIDTH * 2;
+const BOOK_BASE_HEIGHT = BOOK_PAGE_HEIGHT;
 
 const BookPage = React.forwardRef((props, ref) => {
   return (
@@ -232,6 +236,13 @@ export default function ProjectView() {
   const [pickingPhotoFor, setPickingPhotoFor] = useState(null);
   const [hoverPreviewImage, setHoverPreviewImage] = useState(null);
   const [albumViewMode, setAlbumViewMode] = useState('grid');
+  const [pickerWidth, setPickerWidth] = useState(340);
+  const [pickerResizeActive, setPickerResizeActive] = useState(false);
+  const [frameDrag, setFrameDrag] = useState(null);
+  const [frameResize, setFrameResize] = useState(null);
+  const [cropMode, setCropMode] = useState(null);
+  const [frameMenu, setFrameMenu] = useState(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const [photosSearch, setPhotosSearch] = useState('');
   const [photosSort, setPhotosSort] = useState('date');
   const [clustersSearch, setClustersSearch] = useState('');
@@ -240,6 +251,7 @@ export default function ProjectView() {
   const [studentsSort, setStudentsSort] = useState('name');
 
   const projectSlug = (project?.name || '').replace(/ /g, "_").toLowerCase();
+  const albumPreviewRef = useRef(null);
 
   useEffect(() => {
     loadProject();
@@ -267,6 +279,121 @@ export default function ProjectView() {
     if (activeTab === 'faces') { loadClusters(); loadUnassignedFaces(); }
     if (activeTab === 'album') loadImages();
   }, [activeTab]);
+
+  const fitAlbumPreview = () => {
+    if (!albumPreviewRef.current || albumPages.length === 0) return;
+
+    const bounds = albumPreviewRef.current.getBoundingClientRect();
+    const availableWidth = Math.max(320, bounds.width - 48);
+    const availableHeight = Math.max(280, bounds.height - 48);
+
+    if (albumViewMode === 'book') {
+      const fitWidth = availableWidth / BOOK_BASE_WIDTH;
+      const fitHeight = availableHeight / BOOK_BASE_HEIGHT;
+      setPreviewZoom(Math.max(0.45, Math.min(1, fitWidth, fitHeight)));
+      return;
+    }
+
+    const hasPortrait = albumPages.some((page) => page?.orientation === 'portrait');
+    const baseWidth = Math.max(540, 1180 - pickerWidth - 120);
+    const baseHeight = hasPortrait ? baseWidth / 0.707 : baseWidth / 1.414;
+    const fitWidth = availableWidth / baseWidth;
+    const fitHeight = availableHeight / baseHeight;
+    setPreviewZoom(Math.max(0.35, Math.min(1, fitWidth, fitHeight)));
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'album' || albumPages.length === 0) return;
+    const timer = setTimeout(() => fitAlbumPreview(), 0);
+    return () => clearTimeout(timer);
+  }, [activeTab, albumPages, albumViewMode, pickerWidth]);
+
+  useEffect(() => {
+    if (activeTab !== 'album') return;
+    const handleResize = () => fitAlbumPreview();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [activeTab, albumPages, albumViewMode, pickerWidth]);
+
+  useEffect(() => {
+    if (!pickerResizeActive) return;
+
+    const handleMove = (e) => {
+      const nextWidth = Math.max(280, Math.min(520, window.innerWidth - e.clientX - 24));
+      setPickerWidth(nextWidth);
+    };
+    const handleUp = () => setPickerResizeActive(false);
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [pickerResizeActive]);
+
+  useEffect(() => {
+    if (!frameDrag) return;
+
+    const SNAP_EPSILON = 0.08;
+
+    const handleMove = (e) => {
+      const deltaX = e.clientX - frameDrag.startX;
+      const deltaY = e.clientY - frameDrag.startY;
+      const rawX = frameDrag.startOffsetX + (deltaX / Math.max(1, frameDrag.frameWidth)) * 2;
+      const rawY = frameDrag.startOffsetY + (deltaY / Math.max(1, frameDrag.frameHeight)) * 2;
+      const nextOffsetX = Math.abs(rawX) < SNAP_EPSILON ? 0 : Math.max(-1, Math.min(1, rawX));
+      const nextOffsetY = Math.abs(rawY) < SNAP_EPSILON ? 0 : Math.max(-1, Math.min(1, rawY));
+      updateAlbumItem(frameDrag.pIdx, frameDrag.itemIdx, (item) => ({
+        ...item,
+        image_adjust: {
+          zoom: item?.image_adjust?.zoom ?? 1,
+          offset_x: nextOffsetX,
+          offset_y: nextOffsetY,
+        },
+      }));
+    };
+
+    const handleUp = () => setFrameDrag(null);
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [frameDrag]);
+
+  useEffect(() => {
+    if (!frameResize) return;
+
+    const SNAP_ZOOM_EPSILON = 0.06;
+
+    const handleMove = (e) => {
+      const dx = e.clientX - frameResize.startX;
+      const dy = e.clientY - frameResize.startY;
+      const influence = ((frameResize.dirX * dx) + (frameResize.dirY * dy)) / 180;
+      const rawZoom = Math.max(1, Math.min(2.5, frameResize.startZoom + influence));
+      const nextZoom = Math.abs(rawZoom - 1) < SNAP_ZOOM_EPSILON ? 1 : rawZoom;
+      updateAlbumItem(frameResize.pIdx, frameResize.itemIdx, (item) => ({
+        ...item,
+        image_adjust: {
+          zoom: nextZoom,
+          offset_x: item?.image_adjust?.offset_x ?? 0,
+          offset_y: item?.image_adjust?.offset_y ?? 0,
+        },
+      }));
+    };
+
+    const handleUp = () => setFrameResize(null);
+
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, [frameResize]);
 
   async function loadProject() {
     try {
@@ -559,6 +686,132 @@ export default function ProjectView() {
   const openImagePicker = (pIdx, itemIdx) => {
     setPickingPhotoFor({ pIdx, itemIdx });
     setHoverPreviewImage(null);
+    setFrameMenu(null);
+  };
+
+  const isPickedFrame = (pIdx, itemIdx) =>
+    pickingPhotoFor && pickingPhotoFor.pIdx === pIdx && pickingPhotoFor.itemIdx === itemIdx;
+
+  const isCropModeFrame = (pIdx, itemIdx) =>
+    cropMode && cropMode.pIdx === pIdx && cropMode.itemIdx === itemIdx;
+
+  const updateAlbumItem = (pIdx, itemIdx, updater) => {
+    setAlbumPages((prevPages) =>
+      prevPages.map((page, pageIndex) => {
+        if (pageIndex !== pIdx) return page;
+        return {
+          ...page,
+          items: (page.items || []).map((item, index) => {
+            if (index !== itemIdx) return item;
+            return typeof updater === 'function' ? updater(item) : { ...item, ...updater };
+          }),
+        };
+      })
+    );
+  };
+
+  const updatePickedFrameAdjustments = (updates) => {
+    if (!pickingPhotoFor) return;
+    updateAlbumItem(pickingPhotoFor.pIdx, pickingPhotoFor.itemIdx, (item) => ({
+      ...item,
+      image_adjust: {
+        zoom: item?.image_adjust?.zoom ?? 1,
+        offset_x: item?.image_adjust?.offset_x ?? 0,
+        offset_y: item?.image_adjust?.offset_y ?? 0,
+        ...updates,
+      },
+    }));
+  };
+
+  const resetPickedFrameAdjustments = () => {
+    updatePickedFrameAdjustments({ zoom: 1, offset_x: 0, offset_y: 0 });
+  };
+
+  const matchPickedFrameToImage = (target = pickingPhotoFor) => {
+    if (!target) return;
+
+    const page = albumPages?.[target.pIdx];
+    const item = page?.items?.[target.itemIdx];
+    const targetImage = hoverPreviewImage || item?.target_photo;
+    if (!page || !item || !targetImage?.width || !targetImage?.height) return;
+
+    const pageWidth = 1000;
+    const pageHeight = page?.orientation === 'portrait' ? 1414 : 707;
+    const imageRatio = targetImage.width / targetImage.height;
+    const frameWidthPx = (item.width || 0) * pageWidth;
+    const nextHeightPx = frameWidthPx / imageRatio;
+    const nextHeight = Math.max(0.06, Math.min(0.95, nextHeightPx / pageHeight));
+    const currentHeight = item.height || 0;
+    const centerY = (item.y || 0) + currentHeight / 2;
+    const nextY = Math.max(0, Math.min(1 - nextHeight, centerY - nextHeight / 2));
+
+    updateAlbumItem(target.pIdx, target.itemIdx, {
+      height: nextHeight,
+      y: nextY,
+    });
+  };
+
+  const fitFrameImage = (pIdx, itemIdx) => {
+    updateAlbumItem(pIdx, itemIdx, (item) => ({
+      ...item,
+      image_adjust: {
+        zoom: 1,
+        offset_x: 0,
+        offset_y: 0,
+      },
+    }));
+  };
+
+  const getFrameMediaStyle = (item) => {
+    const zoom = item?.image_adjust?.zoom ?? 1;
+    const offsetX = item?.image_adjust?.offset_x ?? 0;
+    const offsetY = item?.image_adjust?.offset_y ?? 0;
+
+    return {
+      position: 'absolute',
+      left: `${50 + offsetX * 12}%`,
+      top: `${50 + offsetY * 12}%`,
+      width: `${zoom * 100}%`,
+      height: `${zoom * 100}%`,
+      transform: 'translate(-50%, -50%)',
+      objectFit: 'cover',
+      display: 'block',
+      transition: 'all 120ms ease',
+    };
+  };
+
+  const handleFrameMouseDown = (e, pIdx, itemIdx) => {
+    if (!isPickedFrame(pIdx, itemIdx) || !isCropModeFrame(pIdx, itemIdx)) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const page = albumPages?.[pIdx];
+    const item = page?.items?.[itemIdx];
+    setFrameDrag({
+      pIdx,
+      itemIdx,
+      startX: e.clientX,
+      startY: e.clientY,
+      startOffsetX: item?.image_adjust?.offset_x ?? 0,
+      startOffsetY: item?.image_adjust?.offset_y ?? 0,
+      frameWidth: bounds.width,
+      frameHeight: bounds.height,
+    });
+  };
+
+  const startFrameResize = (e, pIdx, itemIdx, dirX, dirY) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const item = albumPages?.[pIdx]?.items?.[itemIdx];
+    setFrameResize({
+      pIdx,
+      itemIdx,
+      startX: e.clientX,
+      startY: e.clientY,
+      startZoom: item?.image_adjust?.zoom ?? 1,
+      dirX,
+      dirY,
+    });
   };
 
   async function handleExportAlbum() {
@@ -586,7 +839,8 @@ export default function ProjectView() {
 
   const renderTemplateFrame = (item, idx, itemIdx) => {
     const basePhoto = item?.target_photo;
-    const isTarget = pickingPhotoFor && pickingPhotoFor.pIdx === idx && pickingPhotoFor.itemIdx === itemIdx;
+    const isTarget = isPickedFrame(idx, itemIdx);
+    const isCropping = isCropModeFrame(idx, itemIdx);
     const displayPhoto = isTarget && hoverPreviewImage ? hoverPreviewImage : basePhoto;
     const imageUrl = displayPhoto ? getOriginalImageUrl(displayPhoto) : '';
     const frameShape = item?.shape === 'circle' ? '50%' : 12;
@@ -608,33 +862,50 @@ export default function ProjectView() {
         {item?.type === 'frame' ? (
           <button
             type="button"
-            onClick={() => openImagePicker(idx, itemIdx)}
+            onClick={() => {
+              openImagePicker(idx, itemIdx);
+              setCropMode(null);
+            }}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              openImagePicker(idx, itemIdx);
+              setCropMode({ pIdx: idx, itemIdx });
+              setFrameMenu(null);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openImagePicker(idx, itemIdx);
+              setFrameMenu({ x: e.clientX, y: e.clientY, pIdx: idx, itemIdx });
+            }}
+            onMouseDown={(e) => handleFrameMouseDown(e, idx, itemIdx)}
             style={{
               width: '100%',
               height: '100%',
               padding: 0,
-              border: 'none',
+              border: isTarget ? '2px solid rgba(124, 92, 252, 0.95)' : '1px solid rgba(15, 23, 42, 0.08)',
               background: 'transparent',
               cursor: 'pointer',
               borderRadius: frameShape,
               overflow: 'hidden',
-              boxShadow: '0 10px 24px rgba(15,23,42,0.12)',
+              boxShadow: isTarget
+                ? '0 0 0 5px rgba(124, 92, 252, 0.16), 0 10px 24px rgba(15,23,42,0.16)'
+                : '0 10px 24px rgba(15,23,42,0.12)',
+              position: 'relative',
             }}
           >
             {imageUrl ? (
-              <img
-                src={imageUrl}
-                alt="Album slot"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  display: 'block',
-                  transition: 'transform 120ms ease, filter 120ms ease',
-                  filter: isTarget && hoverPreviewImage ? 'saturate(1.05)' : 'none',
-                }}
-                onError={(e) => { e.target.style.display = 'none'; }}
-              />
+              <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: frameShape }}>
+                <img
+                  src={imageUrl}
+                  alt="Album slot"
+                  style={{
+                    ...getFrameMediaStyle(item),
+                    filter: isTarget && hoverPreviewImage ? 'saturate(1.05)' : 'none',
+                    cursor: isCropping ? 'grab' : 'pointer',
+                  }}
+                  onError={(e) => { e.target.style.display = 'none'; }}
+                />
+              </div>
             ) : (
               <div
                 style={{
@@ -651,6 +922,59 @@ export default function ProjectView() {
               >
                 Add photo
               </div>
+            )}
+            {isTarget && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 10,
+                  bottom: 10,
+                  padding: '5px 8px',
+                  borderRadius: 999,
+                  background: 'rgba(15, 23, 42, 0.72)',
+                  color: 'white',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                }}
+              >
+                {isCropping ? 'Crop mode' : 'Double-click to crop'}
+              </div>
+            )}
+            {isCropping && (
+              <React.Fragment>
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 8,
+                    border: '1.5px solid rgba(255,255,255,0.9)',
+                    borderRadius: frameShape,
+                    boxShadow: '0 0 0 999px rgba(0,0,0,0.12)',
+                    pointerEvents: 'none',
+                  }}
+                />
+                {[
+                  { key: 'nw', left: -4, top: -4, dirX: -1, dirY: -1, cursor: 'nwse-resize' },
+                  { key: 'ne', right: -4, top: -4, dirX: 1, dirY: -1, cursor: 'nesw-resize' },
+                  { key: 'sw', left: -4, bottom: -4, dirX: -1, dirY: 1, cursor: 'nesw-resize' },
+                  { key: 'se', right: -4, bottom: -4, dirX: 1, dirY: 1, cursor: 'nwse-resize' },
+                ].map((handle) => (
+                  <div
+                    key={handle.key}
+                    onMouseDown={(e) => startFrameResize(e, idx, itemIdx, handle.dirX, handle.dirY)}
+                    style={{
+                      position: 'absolute',
+                      width: 12,
+                      height: 12,
+                      borderRadius: '50%',
+                      background: 'white',
+                      border: '2px solid rgba(124, 92, 252, 0.95)',
+                      cursor: handle.cursor,
+                      ...handle,
+                    }}
+                  />
+                ))}
+              </React.Fragment>
             )}
           </button>
         ) : (
@@ -1413,7 +1737,7 @@ export default function ProjectView() {
       )}
 
       {activeTab === 'album' && (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, height: 'calc(100vh - 220px)', minHeight: 680, overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
             <div>
               <h3 style={{ fontSize: 20, fontWeight: 700 }}>Album Draft</h3>
@@ -1466,80 +1790,161 @@ export default function ProjectView() {
               <p className="empty-state-text">Click the button above to automatically place the best photos based on AI clustering and tagging.</p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 40, alignItems: 'center' }}>
-              <div style={{ width: '100%', maxWidth: 1180, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, padding: '14px 18px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>Grid Editor is for editing</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                    Replace photos in grid mode. Book preview is read-only so the album does not keep flipping while you edit.
+            <div style={{ display: 'flex', gap: 0, flex: 1, minHeight: 0, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 24, padding: 20, overflow: 'hidden' }}>
+                <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, padding: '14px 18px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>Workspace</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Click a frame to browse images. Double-click to crop. Right-click for quick fit/reset actions.
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{albumPages.length} pages</div>
+                </div>
+
+                <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end', padding: '0 4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 999, padding: 4 }}>
+                    <button
+                      className="btn btn-sm"
+                      style={{ padding: '6px 10px' }}
+                      onClick={() => setPreviewZoom((prev) => Math.max(0.3, +(prev - 0.1).toFixed(2)))}
+                    >
+                      -
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      style={{ padding: '6px 12px' }}
+                      onClick={fitAlbumPreview}
+                    >
+                      Fit
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      style={{ padding: '6px 10px' }}
+                      onClick={() => setPreviewZoom((prev) => Math.min(1.8, +(prev + 0.1).toFixed(2)))}
+                    >
+                      +
+                    </button>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 44, textAlign: 'center' }}>
+                      {Math.round(previewZoom * 100)}%
+                    </span>
                   </div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{albumPages.length} pages</div>
-              </div>
-              {albumViewMode === 'book' ? (
-                <div style={{ width: '100%', maxWidth: 1000, margin: '20px auto', display: 'flex', justifyContent: 'center' }}>
-                  <HTMLFlipBook 
-                    width={500} 
-                    height={707} 
-                    size="stretch"
-                    minWidth={315}
-                    maxWidth={1000}
-                    minHeight={400}
-                    maxHeight={1414}
-                    showCover={true}
-                    maxShadowOpacity={0.5}
-                    className="custom-flipbook"
-                    style={{ boxShadow: 'var(--shadow-2xl)', borderRadius: 4, margin: '0 auto' }}
-                    disableFlipByClick={true}
-                    mobileScrollSupport={false}
-                  >
-                    {albumPages.map((page, idx) => (
-                      <BookPage key={idx}>
-                         {renderAlbumPageContent(page, idx)}
-                      </BookPage>
-                    ))}
-                  </HTMLFlipBook>
-                </div>
-              ) : (
-                <div style={{ width: '100%', display: 'grid', gap: 28 }}>
-                  {albumPages.map((page, idx) => (
-                    <div key={idx} style={{ width: '100%', maxWidth: 1180, margin: '0 auto', display: 'grid', gridTemplateColumns: '220px 1fr', gap: 18, alignItems: 'start' }}>
-                      <div className="card" style={{ padding: 18 }}>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Page {idx + 1}</div>
-                        <div style={{ marginTop: 8, fontSize: 16, fontWeight: 700 }}>
-                          {page?.orientation === 'portrait' ? 'Portrait layout' : 'Landscape layout'}
-                        </div>
-                        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-                          {(page?.items || []).filter((item) => item?.type === 'frame').length} replaceable photo slots
-                        </div>
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          style={{ width: '100%', marginTop: 16 }}
-                          onClick={() => {
-                            const firstFrameIndex = (page?.items || []).findIndex((item) => item?.type === 'frame');
-                            if (firstFrameIndex >= 0) openImagePicker(idx, firstFrameIndex);
-                          }}
-                          disabled={(page?.items || []).findIndex((item) => item?.type === 'frame') < 0}
-                        >
-                          Replace Photos
-                        </button>
-                      </div>
 
-                      <div style={{ 
-                        width: '100%', maxWidth: '900px', 
-                        aspectRatio: page?.orientation === 'portrait' ? '0.707' : '1.414',
-                        background: 'white',
-                        boxShadow: 'var(--shadow-lg)',
-                        borderRadius: 'var(--radius-sm)',
-                        position: 'relative',
-                        overflow: 'hidden'
-                      }}>
-                        {renderAlbumPageContent(page, idx)}
+                <div ref={albumPreviewRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', paddingRight: 8 }}>
+                  {albumViewMode === 'book' ? (
+                    <div style={{ width: '100%', minHeight: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingBottom: 24, overflow: 'auto' }}>
+                      <div
+                        style={{
+                          width: BOOK_BASE_WIDTH * previewZoom,
+                          height: BOOK_BASE_HEIGHT * previewZoom,
+                          display: 'flex',
+                          justifyContent: 'center',
+                          alignItems: 'flex-start',
+                          overflow: 'visible',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <div
+                          style={{
+                            transform: `scale(${previewZoom})`,
+                            transformOrigin: 'top center',
+                            width: BOOK_BASE_WIDTH,
+                            height: BOOK_BASE_HEIGHT,
+                            display: 'flex',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <HTMLFlipBook 
+                            width={BOOK_PAGE_WIDTH}
+                            height={BOOK_PAGE_HEIGHT}
+                            size="fixed"
+                            showCover={true}
+                            maxShadowOpacity={0.5}
+                            className="custom-flipbook"
+                            style={{ boxShadow: 'var(--shadow-2xl)', borderRadius: 4, margin: '0 auto' }}
+                            disableFlipByClick={true}
+                            mobileScrollSupport={false}
+                          >
+                            {albumPages.map((page, idx) => (
+                              <BookPage key={idx}>
+                                 {renderAlbumPageContent(page, idx)}
+                              </BookPage>
+                            ))}
+                          </HTMLFlipBook>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <div style={{ width: '100%', display: 'grid', gap: 28, paddingBottom: 24, zoom: previewZoom }}>
+                      {albumPages.map((page, idx) => (
+                        <div key={idx} style={{ width: '100%', display: 'grid', gridTemplateColumns: '220px 1fr', gap: 18, alignItems: 'start' }}>
+                          <div className="card" style={{ padding: 18, position: 'sticky', top: 0 }}>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Page {idx + 1}</div>
+                            <div style={{ marginTop: 8, fontSize: 16, fontWeight: 700 }}>
+                              {page?.orientation === 'portrait' ? 'Portrait layout' : 'Landscape layout'}
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                              {(page?.items || []).filter((item) => item?.type === 'frame').length} replaceable photo slots
+                            </div>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ width: '100%', marginTop: 16 }}
+                              onClick={() => {
+                                const firstFrameIndex = (page?.items || []).findIndex((item) => item?.type === 'frame');
+                                if (firstFrameIndex >= 0) openImagePicker(idx, firstFrameIndex);
+                              }}
+                              disabled={(page?.items || []).findIndex((item) => item?.type === 'frame') < 0}
+                            >
+                              Select First Frame
+                            </button>
+                          </div>
+
+                          <div style={{ 
+                            width: '100%',
+                            maxWidth: Math.max(540, 1180 - pickerWidth - 120), 
+                            aspectRatio: page?.orientation === 'portrait' ? '0.707' : '1.414',
+                            background: 'white',
+                            boxShadow: 'var(--shadow-lg)',
+                            borderRadius: 'var(--radius-sm)',
+                            position: 'relative',
+                            overflow: 'hidden'
+                          }}>
+                            {renderAlbumPageContent(page, idx)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
+
+              <PhotoPreviewSidebar
+                isOpen={!!pickingPhotoFor}
+                width={pickerWidth}
+                onResizeStart={() => setPickerResizeActive(true)}
+                projectId={id}
+                project={project}
+                images={images}
+                currentImage={pickingPhotoFor ? albumPages?.[pickingPhotoFor.pIdx]?.items?.[pickingPhotoFor.itemIdx]?.target_photo : null}
+                slotContext={pickingPhotoFor ? albumPages?.[pickingPhotoFor.pIdx]?.items?.[pickingPhotoFor.itemIdx]?.recommendation_context : null}
+                onClose={() => { setPickingPhotoFor(null); setHoverPreviewImage(null); setCropMode(null); setFrameMenu(null); }}
+                onHoverImage={(img) => setHoverPreviewImage(img)}
+                onLeaveImage={() => setHoverPreviewImage(null)}
+                onSelectImage={(newImage) => {
+                  if (!pickingPhotoFor) return;
+                  const pathParts = (newImage.original_path || '').replace(/\\/g, '/').split('/');
+                  const diskFilename = pathParts[pathParts.length - 1] || newImage.filename;
+                  updateAlbumItem(pickingPhotoFor.pIdx, pickingPhotoFor.itemIdx, (item) => ({
+                    ...item,
+                    target_photo: {
+                      ...newImage,
+                      disk_filename: diskFilename
+                    },
+                  }));
+                  setHoverPreviewImage(null);
+                }}
+              />
             </div>
           )}
         </div>
@@ -1644,30 +2049,66 @@ export default function ProjectView() {
         />
       )}
 
-      <PhotoPreviewSidebar
-        isOpen={!!pickingPhotoFor}
-        projectId={id}
-        project={project}
-        images={images}
-        currentImage={pickingPhotoFor ? albumPages?.[pickingPhotoFor.pIdx]?.items?.[pickingPhotoFor.itemIdx]?.target_photo : null}
-        slotContext={pickingPhotoFor ? albumPages?.[pickingPhotoFor.pIdx]?.items?.[pickingPhotoFor.itemIdx]?.recommendation_context : null}
-        onClose={() => { setPickingPhotoFor(null); setHoverPreviewImage(null); }}
-        onHoverImage={(img) => setHoverPreviewImage(img)}
-        onLeaveImage={() => setHoverPreviewImage(null)}
-        onSelectImage={(newImage) => {
-          if (!pickingPhotoFor) return;
-          const newPages = [...albumPages];
-          const pathParts = (newImage.original_path || '').replace(/\\/g, '/').split('/');
-          const diskFilename = pathParts[pathParts.length - 1] || newImage.filename;
-          newPages[pickingPhotoFor.pIdx].items[pickingPhotoFor.itemIdx].target_photo = {
-            ...newImage,
-            disk_filename: diskFilename
-          };
-          setAlbumPages(newPages);
-          setPickingPhotoFor(null);
-          setHoverPreviewImage(null);
-        }}
-      />
+      {frameMenu && (
+        <div
+          style={{
+            position: 'fixed',
+            top: frameMenu.y,
+            left: frameMenu.x,
+            zIndex: 1400,
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            borderRadius: 12,
+            boxShadow: 'var(--shadow-lg)',
+            overflow: 'hidden',
+          }}
+          onMouseLeave={() => setFrameMenu(null)}
+        >
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'block', width: '100%', borderRadius: 0, justifyContent: 'flex-start', padding: '10px 14px' }}
+            onClick={() => {
+              setCropMode({ pIdx: frameMenu.pIdx, itemIdx: frameMenu.itemIdx });
+              setFrameMenu(null);
+            }}
+          >
+            Enter Crop Mode
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'block', width: '100%', borderRadius: 0, justifyContent: 'flex-start', padding: '10px 14px' }}
+            onClick={() => {
+              fitFrameImage(frameMenu.pIdx, frameMenu.itemIdx);
+              setFrameMenu(null);
+            }}
+          >
+            Fit Image
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'block', width: '100%', borderRadius: 0, justifyContent: 'flex-start', padding: '10px 14px' }}
+            onClick={() => {
+              openImagePicker(frameMenu.pIdx, frameMenu.itemIdx);
+              matchPickedFrameToImage({ pIdx: frameMenu.pIdx, itemIdx: frameMenu.itemIdx });
+              setFrameMenu(null);
+            }}
+          >
+            Match Frame Ratio
+          </button>
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ display: 'block', width: '100%', borderRadius: 0, justifyContent: 'flex-start', padding: '10px 14px' }}
+            onClick={() => {
+              fitFrameImage(frameMenu.pIdx, frameMenu.itemIdx);
+              setCropMode(null);
+              setFrameMenu(null);
+            }}
+          >
+            Reset Crop
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }
